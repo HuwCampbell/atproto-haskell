@@ -1,0 +1,52 @@
+cabal-version:      3.0
+name:               atproto-haskell-identity
+version:            0.1.0.0
+synopsis:           AT Protocol identity: handle-to-DID resolution
+description:
+  Port of \@atproto\/identity – resolves AT Protocol handles to DIDs using
+  two mechanisms defined in the specification: a DNS TXT record lookup on
+  @_atproto.\<handle\>@ and an HTTP GET to
+  @https:\/\/\<handle\>\/.well-known\/atproto-did@.
+license:            MIT
+license-file:       LICENSE
+author:             Huw Campbell
+maintainer:         huw.campbell@gmail.com
+category:           Network
+build-type:         Simple
+extra-doc-files:    CHANGELOG.md
+
+common warnings
+  ghc-options: -Wall
+
+library
+  import:           warnings
+  exposed-modules:
+      ATProto.Identity
+      ATProto.Identity.Handle
+  build-depends:
+      base            >= 4.14 && < 5
+    , bytestring      >= 0.10 && < 0.13
+    , dns             >= 4.0  && < 5
+    , http-client     >= 0.7  && < 0.8
+    , http-client-tls >= 0.3  && < 0.5
+    , http-types      >= 0.12 && < 0.13
+    , text            >= 1.2  && < 2.2
+  hs-source-dirs:   src
+  default-extensions: OverloadedStrings
+  default-language:   Haskell2010
+
+test-suite atproto-identity-tests
+  import:           warnings
+  type:             exitcode-stdio-1.0
+  main-is:          Main.hs
+  other-modules:
+      Test.ATProto.Identity.Handle
+  build-depends:
+      base                      >= 4.14 && < 5
+    , bytestring                >= 0.10 && < 0.13
+    , text                      >= 1.2  && < 2.2
+    , atproto-haskell-identity
+    , hedgehog                  >= 1.4  && < 1.8
+  hs-source-dirs:   test
+  default-extensions: OverloadedStrings
+  default-language:   Haskell2010
