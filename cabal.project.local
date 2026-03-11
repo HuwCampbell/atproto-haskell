@@ -1,1 +1,12 @@
 tests: True
+
+-- jose-0.12 and crypton-1.x are incompatible: crypton >= 1.0 switched its
+-- ByteArrayAccess typeclass source from the 'memory' package to 'ram'
+-- (a fork of memory), while jose-0.12 imports ByteArrayAccess from 'memory'.
+-- Pinning crypton to 0.34 keeps both packages on the same ByteArrayAccess
+-- identity.  All existing packages accept crypton >= 0.32 && < 1.2, so this
+-- constraint is within bounds for everything in the project.
+constraints: crypton == 0.34
+
+-- Hedgehog-1.7 depends on boring whose base bound hasn't caught up to GHC 9.12.
+allow-newer: boring:base
