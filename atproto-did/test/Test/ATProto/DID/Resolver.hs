@@ -51,7 +51,7 @@ prop_webDidSubdomain = withTests 1 . property $
 prop_webDidUrlStructure :: Property
 prop_webDidUrlStructure = property $ do
   host <- forAll $
-    Gen.text (Range.linear 1 30) (Gen.element "abcdefghijklmnopqrstuvwxyz0123456789-.")
+    Gen.text (Range.linear 1 30) (Gen.element ("abcdefghijklmnopqrstuvwxyz0123456789-." :: String))
   let did = "did:web:" <> host
   case webDidToUrl did of
     Left  _ ->

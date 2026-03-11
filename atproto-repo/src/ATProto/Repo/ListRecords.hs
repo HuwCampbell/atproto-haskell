@@ -23,8 +23,7 @@ import qualified Data.Map.Strict         as Map
 import qualified Data.Text               as T
 
 import ATProto.XRPC.Client (XrpcClient (..))
-import ATProto.XRPC.Types  (XrpcError, XrpcMethod (..), XrpcRequest (..),
-                             XrpcResponse (..))
+import ATProto.XRPC.Types  (XrpcError (..), XrpcMethod (..), XrpcRequest (..), XrpcResponse (..))
 
 -- ---------------------------------------------------------------------------
 -- Request

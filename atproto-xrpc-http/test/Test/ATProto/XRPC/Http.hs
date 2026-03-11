@@ -1,6 +1,5 @@
 module Test.ATProto.XRPC.Http (tests) where
 
-import qualified Data.ByteString.Lazy.Char8 as BLC
 import qualified Data.Map.Strict            as Map
 import qualified Data.Text                  as T
 import           Hedgehog
@@ -14,16 +13,9 @@ import ATProto.XRPC.Types
 -- ---------------------------------------------------------------------------
 
 -- | Build the XRPC endpoint URL (mirrors buildRequest logic).
-xrpcUrl :: T.Text -> T.Text -> String
+xrpcUrl :: T.Text -> T.Text -> T.Text
 xrpcUrl pdsUrl nsid =
-  T.unpack pdsUrl ++ "/xrpc/" ++ T.unpack nsid
-
--- | Parse an XRPC error body (mirrors parseXrpcError logic).
-parseError :: Int -> String -> XrpcError
-parseError status body =
-  -- minimal inline parse for testing
-  let errToken = "Error"
-  in XrpcError errToken Nothing status
+  pdsUrl <> "/xrpc/" <> nsid
 
 -- ---------------------------------------------------------------------------
 -- Properties
@@ -35,9 +27,9 @@ prop_xrpcUrlStructure = property $ do
   pds  <- forAll $ Gen.text (Range.linear 10 30) Gen.alphaNum
   nsid <- forAll $ Gen.text (Range.linear 5  20) Gen.alphaNum
   let url = xrpcUrl pds nsid
-  T.isInfixOf "/xrpc/" (T.pack url) === True
-  T.isSuffixOf (T.unpack nsid) url  === True
-  T.isPrefixOf (T.unpack pds)  url  === True
+  assert $ T.isInfixOf "/xrpc/" url
+  assert $ T.isSuffixOf nsid    url
+  assert $ T.isPrefixOf pds     url
 
 -- | A known XRPC URL is built correctly.
 prop_knownUrl :: Property

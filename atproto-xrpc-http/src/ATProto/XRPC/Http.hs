@@ -44,6 +44,7 @@ module ATProto.XRPC.Http
 import qualified Data.Aeson              as Aeson
 import qualified Data.ByteString.Char8   as BC
 import qualified Data.ByteString.Lazy    as BL
+import qualified Data.CaseInsensitive    as CI
 import qualified Data.Map.Strict         as Map
 import qualified Data.Text               as T
 import qualified Data.Text.Encoding      as TE
@@ -119,7 +120,7 @@ buildRequest client xrpcReq = do
       body = case xrpcReqBody xrpcReq of
                Nothing -> RequestBodyLBS BL.empty
                Just b  -> RequestBodyLBS b
-      hdrs = [ (TE.encodeUtf8 k, TE.encodeUtf8 v)
+      hdrs = [ (CI.mk (TE.encodeUtf8 k), TE.encodeUtf8 v)
              | (k, v) <- Map.toList (xrpcReqHeaders xrpcReq)
              ]
   base <- parseRequest url
