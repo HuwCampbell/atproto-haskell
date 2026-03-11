@@ -4,9 +4,11 @@ packages:
   atproto-lexicon/
   atproto-crypto/
   atproto-xrpc/
+  atproto-xrpc-http/
 
--- hedgehog-1.7 depends on boring, whose base bound hasn't caught up to
--- GHC 9.14 (base-4.22). This allow-newer entry is safe: boring is an
--- internal implementation detail of the lifted-async → constraints →
--- boring dependency chain; all we're doing is letting GHC build it.
-allow-newer: boring:base
+-- GHC 9.14 ships base-4.22 and template-haskell-2.24.  Several packages on
+-- Hackage have not yet updated their upper bounds.  We relax all bounds on
+-- these two boot libraries globally rather than enumerate every transitive
+-- offender.  This is safe: we are not changing any package's behaviour,
+-- only letting the solver pick a GHC-compatible build plan.
+allow-newer: *:base, *:template-haskell
