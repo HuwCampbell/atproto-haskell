@@ -508,7 +508,9 @@ refreshSession client did session = runEitherT $ do
   now   <- lift getCurrentTime
   newTs <- hoistEither (parseTokenResponse now iss body)
 
-  let newSession = session { sessTokenSet = newTs }
+  -- The issuer is verified on first login, so we don't need to verify it again.
+  -- However, the parsed token has no audience, so use the initial ones.
+  let newSession = session { sessTokenSet = newTs { tsAud = tsAud ts } }
   lift $ sessStorePut (ocSessionStore client) did newSession
   return newTs
 
