@@ -57,6 +57,10 @@ module ATProto.OAuth.Client
   , deleteSession
   ) where
 
+import           Control.Monad                (unless)
+import           Control.Monad.Trans.Class    (lift)
+import           Control.Monad.Trans.Either   (newEitherT, runEitherT, hoistEither,
+                                               hoistMaybe, left)
 import           Control.Exception            (SomeException, catch)
 import           Data.IORef                   (IORef, modifyIORef', newIORef,
                                                readIORef)
@@ -401,65 +405,52 @@ exchangeCode
   -> StateData
   -> T.Text     -- authorization code
   -> IO (Either OAuthError Session)
-exchangeCode client sd code = do
+exchangeCode client sd code = runEitherT $ do
   let mgr = occManager (ocConfig client)
       cm  = occMetadata (ocConfig client)
       iss = sdIss sd
-  eAsMeta <- fetchAuthorizationServerMetadata mgr iss
-  case eAsMeta of
-    Left err     -> return (Left err)
-    Right asMeta -> do
-      let tokenUrl    = asmTokenEndpoint asMeta
-          redirectUri = case cmRedirectUris cm of
-                          []    -> ""
-                          (r:_) -> r
-          formBody =
-            [ ("grant_type",    "authorization_code")
-            , ("code",          TE.encodeUtf8 code)
-            , ("client_id",     TE.encodeUtf8 (cmClientId cm))
-            , ("redirect_uri",  TE.encodeUtf8 redirectUri)
-            , ("code_verifier", sdCodeVerifier sd)
-            ]
-      eResp <- postWithDpop client iss (sdDpopKey sd) tokenUrl
-                 formBody Nothing
-      case eResp of
-        Left err -> return (Left err)
-        Right (body, _hdrs) -> do
-          now <- getCurrentTime
-          case parseTokenResponse now iss body of
-            Left err -> return (Left err)
-            Right ts -> do
-              -- Issuer verification (security-critical).
-              eAud <- verifyIssuer client ts
-              case eAud of
-                Left err  -> return (Left err)
-                Right aud ->
-                  let ts' = ts { tsAud = aud }
-                  in  return (Right Session
-                        { sessTokenSet = ts'
-                        , sessDpopKey  = sdDpopKey sd
-                        })
+  asMeta <- newEitherT $ fetchAuthorizationServerMetadata mgr iss
+  let tokenUrl    = asmTokenEndpoint asMeta
+      redirectUri = case cmRedirectUris cm of
+                      []    -> ""
+                      (r:_) -> r
+      formBody =
+        [ ("grant_type",    "authorization_code")
+        , ("code",          TE.encodeUtf8 code)
+        , ("client_id",     TE.encodeUtf8 (cmClientId cm))
+        , ("redirect_uri",  TE.encodeUtf8 redirectUri)
+        , ("code_verifier", sdCodeVerifier sd)
+        ]
+
+  (body, _hdrs) <-
+    newEitherT $
+      postWithDpop client iss (sdDpopKey sd) tokenUrl formBody Nothing
+
+  now <- lift $ getCurrentTime
+  ts  <- hoistEither $ parseTokenResponse now iss body
+  -- Issuer verification (security-critical).
+  aud <- newEitherT $ verifyIssuer client ts
+  let ts' = ts { tsAud = aud }
+  return (Session
+      { sessTokenSet = ts'
+      , sessDpopKey  = sdDpopKey sd
+      })
 
 -- | Resolve the @sub@ DID and verify the issuer matches.
 --
 -- This is the critical security check: the user's PDS must be served by the
 -- same authorization server that issued the token.
 verifyIssuer :: OAuthClient -> TokenSet -> IO (Either OAuthError T.Text)
-verifyIssuer client ts = do
+verifyIssuer client ts = runEitherT $ do
   let mgr = occManager (ocConfig client)
       sub = tsSub ts
       iss = tsIss ts
-  ePds <- resolvePds client sub
-  case ePds of
-    Left err     -> return (Left err)
-    Right pdsUrl -> do
-      eResolvedIssuer <- getIssuerForPds mgr pdsUrl
-      case eResolvedIssuer of
-        Left err             -> return (Left err)
-        Right resolvedIssuer ->
-          if iss /= resolvedIssuer
-            then return (Left (OAuthIssuerMismatch iss resolvedIssuer))
-            else return (Right pdsUrl)
+  pdsUrl         <- newEitherT $ resolvePds client sub
+  resolvedIssuer <- newEitherT $ getIssuerForPds mgr pdsUrl
+  unless (iss == resolvedIssuer) $
+    left (OAuthIssuerMismatch iss resolvedIssuer)
+
+  return pdsUrl
 
 -- ---------------------------------------------------------------------------
 -- Session access
@@ -483,7 +474,7 @@ getTokenInfo client did = do
           buf    = occTokenRefreshBuffer (ocConfig client)
           stale  = case tsExpiresAt ts of
                      Nothing  -> False
-                     Just exp -> addUTCTime (negate buf) exp <= now
+                     Just expires -> addUTCTime (negate buf) expires <= now
       if stale
         then refreshSession client did session
         else return (Right ts)
@@ -494,36 +485,32 @@ refreshSession
   -> T.Text   -- DID
   -> Session
   -> IO (Either OAuthError TokenSet)
-refreshSession client did session = do
+refreshSession client did session = runEitherT $ do
   let mgr = occManager (ocConfig client)
       ts  = sessTokenSet session
       iss = tsIss ts
       cm  = occMetadata (ocConfig client)
-  case tsRefreshToken ts of
-    Nothing -> return (Left OAuthNoRefreshToken)
-    Just rt -> do
-      eAsMeta <- fetchAuthorizationServerMetadata mgr iss
-      case eAsMeta of
-        Left err     -> return (Left err)
-        Right asMeta -> do
-          let tokenUrl = asmTokenEndpoint asMeta
-              formBody =
-                [ ("grant_type",    "refresh_token")
-                , ("refresh_token", TE.encodeUtf8 rt)
-                , ("client_id",     TE.encodeUtf8 (cmClientId cm))
-                ]
-          eResp <- postWithDpop client iss (sessDpopKey session) tokenUrl
-                     formBody Nothing
-          case eResp of
-            Left err -> return (Left err)
-            Right (body, _hdrs) -> do
-              now <- getCurrentTime
-              case parseTokenResponse now iss body of
-                Left err   -> return (Left err)
-                Right newTs -> do
-                  let newSession = session { sessTokenSet = newTs }
-                  sessStorePut (ocSessionStore client) did newSession
-                  return (Right newTs)
+  rt     <- hoistMaybe OAuthNoRefreshToken (tsRefreshToken ts)
+  asMeta <- newEitherT (fetchAuthorizationServerMetadata mgr iss)
+
+  let tokenUrl = asmTokenEndpoint asMeta
+      formBody =
+        [ ("grant_type",    "refresh_token")
+        , ("refresh_token", TE.encodeUtf8 rt)
+        , ("client_id",     TE.encodeUtf8 (cmClientId cm))
+        ]
+
+  (body, _hdrs) <-
+    newEitherT (
+      postWithDpop client iss (sessDpopKey session) tokenUrl formBody Nothing
+    )
+
+  now   <- lift getCurrentTime
+  newTs <- hoistEither (parseTokenResponse now iss body)
+
+  let newSession = session { sessTokenSet = newTs }
+  lift $ sessStorePut (ocSessionStore client) did newSession
+  return newTs
 
 -- | Remove a session from the session store.
 deleteSession :: OAuthClient -> T.Text -> IO ()
@@ -649,7 +636,7 @@ doPost mgr url formFields extraHdrs =
 
 -- | Parse an OAuth error from a failed response.
 parseError :: Int -> BL.ByteString -> ResponseHeaders -> OAuthError
-parseError status body hdrs =
+parseError status body _hdrs =
   case (Aeson.eitherDecode body :: Either String Aeson.Value) of
     Right (Aeson.Object o) ->
       let get k = case AesonTypes.parseMaybe (Aeson..: k) o of

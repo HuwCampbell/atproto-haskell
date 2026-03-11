@@ -10,9 +10,3 @@ packages:
   atproto-oauth/
 
 with-compiler: ghc-9.12.2
-
--- hedgehog-1.7 depends on boring, whose base bound hasn't caught up to
--- GHC 9.12 (base-4.21). This allow-newer entry is safe: boring is an
--- internal implementation detail of the lifted-async → constraints →
--- boring dependency chain.
-allow-newer: boring:base
