@@ -34,7 +34,6 @@ genTld = do
   rest  <- Gen.text (Range.linear 0 10) Gen.alphaNum
   return $ T.pack (first : T.unpack rest)
 
--- | A valid handle: at least label.tld, with optional extra labels.
 -- | A valid handle: always at least one domain label followed by the TLD
 -- (giving at least one dot and two labels as required).
 genValidHandle :: Gen T.Text

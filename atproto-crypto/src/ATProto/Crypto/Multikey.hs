@@ -1,17 +1,17 @@
--- | Multibase / multikey encoding helpers.
+-- | Multikey encoding for the AT Protocol.
 --
--- The AT Protocol encodes public keys as "multikeys" – a multibase
--- base58btc-encoded byte string where the first two bytes are a varint
--- codec prefix identifying the curve and key type.
+-- A multikey is the @z@-prefixed base58btc encoding of a codec-prefixed
+-- compressed public key.  The @z@ prefix is the multibase identifier for
+-- base58btc.
 --
--- Codec prefixes (unsigned varint):
+-- Codec prefixes (little-endian unsigned varint):
 --
---   * @0x1200@ – P-256 compressed public key (\"p256-pub\")
---   * @0xe701@ – secp256k1 compressed public key (\"secp256k1-pub\")
+--   * @[0x80, 0x24]@ – P-256 compressed public key
+--   * @[0xe7, 0x01]@ – secp256k1 compressed public key
 module ATProto.Crypto.Multikey
   ( -- * Codec prefixes
-    p256PubPrefix
-  , secp256k1PubPrefix
+    p256Prefix
+  , secp256k1Prefix
     -- * Encoding / decoding
   , encodeMultikey
   , decodeMultikey
@@ -19,37 +19,50 @@ module ATProto.Crypto.Multikey
 
 import qualified Data.ByteString as BS
 
+import ATProto.Crypto.Base58
 import ATProto.Crypto.Types
 
--- | Varint-encoded codec prefix for a compressed P-256 public key.
-p256PubPrefix :: BS.ByteString
-p256PubPrefix = BS.pack [0x80, 0x24]   -- 0x1200 in unsigned-varint LE
-
--- | Varint-encoded codec prefix for a compressed secp256k1 public key.
-secp256k1PubPrefix :: BS.ByteString
-secp256k1PubPrefix = BS.pack [0xe7, 0x01]  -- 0x0131 ... see multiformats
-
--- | Prepend the appropriate codec prefix to a compressed public-key point.
+-- | Codec prefix bytes for a P-256 compressed public key.
 --
--- The resulting bytes are intended to be base58btc-multibase encoded
--- (prefix @z@) to produce a multikey string.
-encodeMultikey :: PubKey -> BS.ByteString
+-- Encodes the multicodec value @0x1200@ in unsigned-varint little-endian.
+p256Prefix :: BS.ByteString
+p256Prefix = BS.pack [0x80, 0x24]
+
+-- | Codec prefix bytes for a secp256k1 compressed public key.
+--
+-- Encodes the multicodec value @0xe7@ (231) in unsigned-varint: the
+-- continuation bit is set on the first byte, giving @[0xe7, 0x01]@.
+secp256k1Prefix :: BS.ByteString
+secp256k1Prefix = BS.pack [0xe7, 0x01]
+
+-- | Encode a 'PubKey' as a multikey string: @\"z\" ++ base58btc(prefix || key)@.
+encodeMultikey :: PubKey -> String
 encodeMultikey (PubKey curve bytes) =
-  prefix <> bytes
+  'z' : encodeBase58 (prefix <> bytes)
   where
     prefix = case curve of
-      P256      -> p256PubPrefix
-      Secp256k1 -> secp256k1PubPrefix
+      P256      -> p256Prefix
+      Secp256k1 -> secp256k1Prefix
 
--- | Strip the codec prefix from a raw multikey byte string and return the
--- curve and compressed key bytes.
+-- | Decode a multikey string into a 'PubKey'.
 --
--- Returns 'Left' when the prefix is unrecognised.
-decodeMultikey :: BS.ByteString -> Either String PubKey
-decodeMultikey bs
-  | p256PubPrefix `BS.isPrefixOf` bs =
-      Right $ PubKey P256 (BS.drop (BS.length p256PubPrefix) bs)
-  | secp256k1PubPrefix `BS.isPrefixOf` bs =
-      Right $ PubKey Secp256k1 (BS.drop (BS.length secp256k1PubPrefix) bs)
-  | otherwise =
-      Left "Unrecognised multikey codec prefix"
+-- Returns 'Left' if the string is not a well-formed multikey for either
+-- of the supported curves.
+decodeMultikey :: String -> Either String PubKey
+decodeMultikey ('z' : rest) =
+  case decodeBase58 rest of
+    Nothing -> Left "Multikey: base58btc decoding failed"
+    Just bs
+      | p256Prefix `BS.isPrefixOf` bs ->
+          let keyBytes = BS.drop (BS.length p256Prefix) bs
+          in if BS.length keyBytes == 33
+             then Right (PubKey P256 keyBytes)
+             else Left "Multikey: P-256 key payload is not 33 bytes"
+      | secp256k1Prefix `BS.isPrefixOf` bs ->
+          let keyBytes = BS.drop (BS.length secp256k1Prefix) bs
+          in if BS.length keyBytes == 33
+             then Right (PubKey Secp256k1 keyBytes)
+             else Left "Multikey: secp256k1 key payload is not 33 bytes"
+      | otherwise ->
+          Left "Multikey: unrecognised codec prefix"
+decodeMultikey _ = Left "Multikey: missing multibase 'z' prefix"
