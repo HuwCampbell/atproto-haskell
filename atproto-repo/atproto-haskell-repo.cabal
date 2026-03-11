@@ -1,11 +1,12 @@
 cabal-version:      3.0
-name:               atproto-haskell-lexicon
+name:               atproto-haskell-repo
 version:            0.1.0.0
-synopsis:           AT Protocol Lexicon schema types and JSON parsing
+synopsis:           AT Protocol com.atproto.repo XRPC method bindings
 description:
-  Data types representing the AT Protocol Lexicon schema language, together
-  with hand-written 'Data.Aeson.FromJSON' instances (no Template Haskell) for
-  decoding @.lexicon.json@ files into Haskell values.
+  Typed Haskell bindings for the @com.atproto.repo.*@ XRPC methods, starting
+  with @com.atproto.repo.listRecords@.  Uses the 'XrpcClient' typeclass from
+  @atproto-haskell-xrpc@, so any concrete backend (e.g. the
+  @http-client-tls@ backend in @atproto-haskell-xrpc-http@) can be used.
 license:            MIT
 license-file:       LICENSE
 author:             Huw Campbell
@@ -20,34 +21,32 @@ common warnings
 library
   import:           warnings
   exposed-modules:
-      ATProto.Lexicon
-      ATProto.Lexicon.Json
-      ATProto.Lexicon.Primitives
-      ATProto.Lexicon.Types
+      ATProto.Repo
+      ATProto.Repo.ListRecords
   build-depends:
-      base        >= 4.14 && < 5
-    , aeson       >= 2.0  && < 2.3
-    , containers  >= 0.6  && < 0.9
-    , text        >= 1.2  && < 2.2
-    , atproto-haskell-syntax
+      base                   >= 4.14 && < 5
+    , aeson                  >= 2.0  && < 2.3
+    , bytestring             >= 0.10 && < 0.13
+    , containers             >= 0.6  && < 0.9
+    , text                   >= 1.2  && < 2.2
+    , atproto-haskell-xrpc
   hs-source-dirs:   src
   default-extensions: OverloadedStrings
   default-language:   Haskell2010
 
-test-suite atproto-lexicon-tests
+test-suite atproto-repo-tests
   import:           warnings
   type:             exitcode-stdio-1.0
   main-is:          Main.hs
   other-modules:
-      Test.ATProto.Lexicon.Json
+      Test.ATProto.Repo.ListRecords
   build-depends:
       base                   >= 4.14 && < 5
     , aeson                  >= 2.0  && < 2.3
     , bytestring             >= 0.10 && < 0.13
     , text                   >= 1.2  && < 2.2
-    , containers             >= 0.6  && < 0.9
+    , atproto-haskell-repo
     , hedgehog               >= 1.4  && < 1.8
-    , atproto-haskell-lexicon
   hs-source-dirs:   test
   default-extensions: OverloadedStrings
   default-language:   Haskell2010

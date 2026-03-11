@@ -31,7 +31,8 @@ library
     , text                  >= 1.2  && < 2.2
     , atproto-haskell-xrpc
   hs-source-dirs:   src
-  default-language: Haskell2010
+  default-extensions: OverloadedStrings
+  default-language:   Haskell2010
 
 test-suite atproto-xrpc-http-tests
   import:           warnings
@@ -48,4 +49,5 @@ test-suite atproto-xrpc-http-tests
     , atproto-haskell-xrpc-http
     , hedgehog                  >= 1.4  && < 1.8
   hs-source-dirs:   test
-  default-language: Haskell2010
+  default-extensions: OverloadedStrings
+  default-language:   Haskell2010

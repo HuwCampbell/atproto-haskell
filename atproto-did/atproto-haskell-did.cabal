@@ -30,9 +30,11 @@ library
     , bytestring      >= 0.10 && < 0.13
     , http-client     >= 0.7  && < 0.8
     , http-client-tls >= 0.3  && < 0.5
+    , http-types     >= 0.12 && < 0.13
     , text            >= 1.2  && < 2.2
   hs-source-dirs:   src
-  default-language: Haskell2010
+  default-extensions: OverloadedStrings
+  default-language:   Haskell2010
 
 test-suite atproto-did-tests
   import:           warnings
@@ -49,4 +51,5 @@ test-suite atproto-did-tests
     , atproto-haskell-did
     , hedgehog              >= 1.4  && < 1.8
   hs-source-dirs:   test
-  default-language: Haskell2010
+  default-extensions: OverloadedStrings
+  default-language:   Haskell2010
