@@ -1,0 +1,12 @@
+packages:
+  atproto-syntax/
+  atproto-did/
+  atproto-lexicon/
+  atproto-crypto/
+  atproto-xrpc/
+
+-- hedgehog-1.7 depends on boring, whose base bound hasn't caught up to
+-- GHC 9.14 (base-4.22). This allow-newer entry is safe: boring is an
+-- internal implementation detail of the lifted-async → constraints →
+-- boring dependency chain; all we're doing is letting GHC build it.
+allow-newer: boring:base
