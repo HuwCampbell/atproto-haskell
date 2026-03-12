@@ -2,6 +2,7 @@ packages:
   atproto-syntax/
   atproto-did/
   atproto-identity/
+  atproto-ipld/
   atproto-lexicon/
   atproto-crypto/
   atproto-xrpc/
