@@ -51,4 +51,7 @@ data XrpcError = XrpcError
     -- ^ Optional human-readable message.
   , xrpcErrStatus  :: Int
     -- ^ HTTP status code.
+  , xrpcErrHeaders :: XrpcHeaders
+    -- ^ Response headers.  Useful for extracting the @DPoP-Nonce@ header
+    -- when the server returns a @use_dpop_nonce@ error.
   } deriving (Eq, Show)

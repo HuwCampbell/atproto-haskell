@@ -52,7 +52,8 @@ import           Network.HTTP.Client     (Manager, Request, RequestBody (..),
                                           httpLbs, method, newManager,
                                           parseRequest, queryString,
                                           requestBody, requestHeaders,
-                                          responseBody, responseStatus)
+                                          responseBody, responseHeaders,
+                                          responseStatus)
 import           Network.HTTP.Client.TLS (tlsManagerSettings)
 import           Network.HTTP.Types      (renderQuery, toQuery, statusCode)
 
@@ -96,13 +97,17 @@ runHttpXrpc client xrpcReq = do
   resp <- httpLbs req (httpXrpcManager client)
   let status = statusCode (responseStatus resp)
       body   = responseBody resp
+      hdrs   = Map.fromList
+                 [ (TE.decodeUtf8Lenient (CI.original k), TE.decodeUtf8Lenient v)
+                 | (k, v) <- responseHeaders resp
+                 ]
   if status >= 200 && status < 300
     then return $ Right XrpcResponse
            { xrpcRespStatus  = status
-           , xrpcRespHeaders = Map.empty
+           , xrpcRespHeaders = hdrs
            , xrpcRespBody    = body
            }
-    else return $ Left (parseXrpcError status body)
+    else return $ Left (parseXrpcError status hdrs body)
 
 -- | Construct an HTTP 'Request' from an XRPC request descriptor.
 buildRequest :: HttpXrpcClient -> XrpcRequest -> IO Request
@@ -135,20 +140,22 @@ buildRequest client xrpcReq = do
 --
 -- The AT Protocol mandates @{ \"error\": \"...\", \"message\": \"...\" }@.
 -- Falls back to a generic error token when the body is not valid JSON.
-parseXrpcError :: Int -> BL.ByteString -> XrpcError
-parseXrpcError status body =
+parseXrpcError :: Int -> Map.Map T.Text T.Text -> BL.ByteString -> XrpcError
+parseXrpcError status hdrs body =
   case (Aeson.eitherDecode body :: Either String (Map.Map T.Text Aeson.Value)) of
     Right m ->
       XrpcError
         { xrpcErrError   = lookupStr "error"   m
         , xrpcErrMessage = lookupMaybeStr "message" m
         , xrpcErrStatus  = status
+        , xrpcErrHeaders = hdrs
         }
     Left _ ->
       XrpcError
         { xrpcErrError   = "Error"
         , xrpcErrMessage = Nothing
         , xrpcErrStatus  = status
+        , xrpcErrHeaders = hdrs
         }
   where
     lookupStr k m =
