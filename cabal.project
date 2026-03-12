@@ -8,5 +8,6 @@ packages:
   atproto-xrpc-http/
   atproto-repo/
   atproto-oauth/
+  examples/oauth-cli/
 
 with-compiler: ghc-9.12.2
