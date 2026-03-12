@@ -221,8 +221,7 @@ startCallbackServer :: IO (Warp.Port, MVar CallbackParams)
 startCallbackServer = do
   mvar <- newEmptyMVar
   (port, sock) <- Warp.openFreePort
-  let settings = Warp.setPort port Warp.defaultSettings
-      app :: Application
+  let app :: Application
       app req respond = do
         let params = queryToQueryText (queryString req)
             get k  = maybe "" id (lookup k params >>= id)
@@ -234,7 +233,7 @@ startCallbackServer = do
         respond $ responseLBS status200
           [("Content-Type", "text/html")]
           "<h1>Authorized! You can close this tab.</h1>"
-  _ <- forkIO $ Warp.runSettingsSocket settings sock app
+  _ <- forkIO $ Warp.runSettingsSocket Warp.defaultSettings sock app
   return (port, mvar)
 
 -- ---------------------------------------------------------------------------
