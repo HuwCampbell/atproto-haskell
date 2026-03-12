@@ -69,6 +69,7 @@ import qualified Data.Aeson.Types              as AesonTypes
 import qualified Data.ByteString              as BS
 import qualified Data.ByteString.Char8        as BC
 import qualified Data.ByteString.Lazy         as BL
+import qualified Data.Char                    as Char
 import qualified Data.CaseInsensitive         as CI
 import qualified Data.Map.Strict              as Map
 import qualified Data.Text                    as T
@@ -241,46 +242,31 @@ authorize
   :: OAuthClient
   -> AuthorizeParams
   -> IO (Either OAuthError AuthorizeResult)
-authorize client params = do
-  eDid <- resolveToDid client (apInput params)
-  case eDid of
-    Left err  -> return (Left err)
-    Right did -> do
-      let mgr = occManager (ocConfig client)
-          cm  = occMetadata (ocConfig client)
-      ePds <- resolvePds client did
-      case ePds of
-        Left err     -> return (Left err)
-        Right pdsUrl -> do
-          eIssuer <- getIssuerForPds mgr pdsUrl
-          case eIssuer of
-            Left err     -> return (Left err)
-            Right issuer -> do
-              eAsMeta <- fetchAuthorizationServerMetadata mgr issuer
-              case eAsMeta of
-                Left err     -> return (Left err)
-                Right asMeta -> do
-                  verifier  <- generateCodeVerifier
-                  let challenge = codeChallenge verifier
-                  dpopKey   <- generateDpopKey
-                  stateVal  <- generateJti
-                  ePar <- doPar client asMeta dpopKey challenge stateVal params
-                  case ePar of
-                    Left err     -> return (Left err)
-                    Right reqUri -> do
-                      let sd = StateData
-                            { sdIss          = issuer
-                            , sdDpopKey      = dpopKey
-                            , sdCodeVerifier = verifier
-                            , sdState        = stateVal
-                            , sdAppState     = apAppState params
-                            }
-                      storePutState (ocStateStore client) stateVal sd
-                      let authUrl = buildAuthRedirectUrl asMeta cm stateVal reqUri
-                      return (Right AuthorizeResult
-                        { arRedirectUrl = authUrl
-                        , arState       = stateVal
-                        })
+authorize client params = runEitherT $ do
+  did          <- newEitherT  (resolveToDid client (apInput params))
+  let mgr       = occManager  (ocConfig client)
+      cm        = occMetadata (ocConfig client)
+  pdsUrl       <- newEitherT  (resolvePds client did)
+  issuer       <- newEitherT  (getIssuerForPds mgr pdsUrl)
+  asMeta       <- newEitherT  (fetchAuthorizationServerMetadata mgr issuer)
+  verifier     <- lift $ generateCodeVerifier
+  let challenge = codeChallenge verifier
+  dpopKey      <- lift $ generateDpopKey
+  stateVal     <- lift $ generateJti
+  reqUri       <- newEitherT $ doPar client asMeta dpopKey challenge stateVal params
+  let sd = StateData
+        { sdIss          = issuer
+        , sdDpopKey      = dpopKey
+        , sdCodeVerifier = verifier
+        , sdState        = stateVal
+        , sdAppState     = apAppState params
+        }
+  lift $ storePutState (ocStateStore client) stateVal sd
+  let authUrl = buildAuthRedirectUrl asMeta cm stateVal reqUri
+  return $ AuthorizeResult
+    { arRedirectUrl = authUrl
+    , arState       = stateVal
+    }
 
 -- | POST a PAR request and return the @request_uri@.
 doPar
@@ -333,15 +319,18 @@ doPar client asMeta dpopKey challenge stateVal params =
                 , dcNonce = newNonce
                 , dcAth   = Nothing
                 }
+
               case eProof2 of
                 Left err2 -> return (Left (OAuthDpopError err2))
                 Right proof2 -> do
+
                   let dpopHdr2 = [("DPoP", TE.encodeUtf8 proof2)]
                   (respHdrs2, eResp2) <- doPost mgr (T.unpack endpoint) formBody dpopHdr2
                   storeNonce client iss respHdrs2
                   case eResp2 of
                     Left err2  -> return (Left err2)
-                    Right body -> parseParResponse body
+                    Right body -> do
+                      parseParResponse body
             Left err -> return (Left err)
             Right body -> parseParResponse body
 
@@ -610,10 +599,7 @@ storeNonce client issuer hdrs =
       modifyIORef' (ocNonceCache client)
         (Map.insert issuer (TE.decodeUtf8Lenient nonce))
   where
-    normHeader (k, v) = (BC.map toLower k, v)
-    toLower c
-      | c >= 'A' && c <= 'Z' = toEnum (fromEnum c + 32)
-      | otherwise             = c
+    normHeader (k, v) = (BC.map Char.toLower k, v)
 
 -- | POST a URL-encoded form and return the body + response headers.
 --

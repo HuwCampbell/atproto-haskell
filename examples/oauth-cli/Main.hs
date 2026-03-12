@@ -15,6 +15,8 @@ module Main (main) where
 
 import           Control.Concurrent       (MVar, forkIO, newEmptyMVar,
                                            putMVar, takeMVar)
+import           Control.Monad            (join)
+import           Data.Maybe               (fromMaybe)
 import qualified Data.Map.Strict          as Map
 import qualified Data.Text                as T
 import qualified Data.Text.Encoding       as TE
@@ -82,7 +84,7 @@ run handle = do
 
   -- Start a local callback server on a random available port.
   (port, callbackMVar) <- startCallbackServer
-  let callbackUrl = "http://127.0.0.1:" <> T.pack (show port) <> "/callback"
+  let callbackUrl = "http://127.0.0.1:" <> T.pack (show port) <> "/"
 
   -- Configure the OAuth client.
   --
@@ -111,7 +113,7 @@ run handle = do
   eAuth <- authorize oauthClient AuthorizeParams
     { apInput       = handle
     , apRedirectUri = callbackUrl
-    , apScope       = "atproto transition:generic"
+    , apScope       = "atproto" --  transition:generic"
     , apAppState    = Nothing
     }
 
@@ -165,6 +167,8 @@ fetchAndPrintProfile mgr session = do
 
   -- Build a DPoP proof for the GET request to the PDS.
   let resourceUrl = pdsUrl <> "/xrpc/app.bsky.actor.getProfile"
+  -- cachedNonce <- fmap (Map.lookup issuer) (readIORef (ocNonceCache client))
+
   eProof <- createDpopProof (sessDpopKey session) DpopClaims
     { dcHtm   = "GET"
     , dcHtu   = resourceUrl
@@ -224,11 +228,11 @@ startCallbackServer = do
   let app :: Application
       app req respond = do
         let params = queryToQueryText (queryString req)
-            get k  = maybe "" id (lookup k params >>= id)
+            get k  = fromMaybe "" (join (lookup k params))
         putMVar mvar CallbackParams
           { cpCode  = get "code"
           , cpState = get "state"
-          , cpIss   = lookup "iss" params >>= id
+          , cpIss   = join (lookup "iss" params)
           }
         respond $ responseLBS status200
           [("Content-Type", "text/html")]
