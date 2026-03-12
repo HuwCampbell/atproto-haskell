@@ -1,0 +1,55 @@
+cabal-version:      3.0
+name:               atproto-haskell-syntax
+version:            0.1.0.0
+synopsis:           AT Protocol identifier syntax: DIDs, handles, NSIDs, AT URIs, TIDs, record keys
+description:
+  Port of \@atproto\/syntax – validates and parses the core identifier types
+  used in the AT Protocol: Decentralised Identifiers (DIDs), handles,
+  Namespaced Identifiers (NSIDs), AT URIs, Timestamp IDs (TIDs), and
+  record keys.
+license:            MIT
+license-file:       LICENSE
+author:             Huw Campbell
+maintainer:         huw.campbell@gmail.com
+category:           Network
+build-type:         Simple
+extra-doc-files:    CHANGELOG.md
+
+common warnings
+  ghc-options: -Wall
+  default-extensions: OverloadedStrings
+
+library
+  import:           warnings
+  exposed-modules:
+      ATProto.Syntax
+      ATProto.Syntax.DID
+      ATProto.Syntax.Handle
+      ATProto.Syntax.NSID
+      ATProto.Syntax.AtUri
+      ATProto.Syntax.TID
+      ATProto.Syntax.RecordKey
+  build-depends:
+      base        >= 4.14 && < 5
+    , text        >= 1.2  && < 2.2
+  hs-source-dirs:   src
+  default-language: Haskell2010
+
+test-suite atproto-syntax-tests
+  import:           warnings
+  type:             exitcode-stdio-1.0
+  main-is:          Main.hs
+  other-modules:
+      Test.ATProto.Syntax.DID
+      Test.ATProto.Syntax.Handle
+      Test.ATProto.Syntax.NSID
+      Test.ATProto.Syntax.AtUri
+      Test.ATProto.Syntax.TID
+      Test.ATProto.Syntax.RecordKey
+  build-depends:
+      base                    >= 4.14 && < 5
+    , text                    >= 1.2  && < 2.2
+    , atproto-haskell-syntax
+    , hedgehog                >= 1.4  && < 1.8
+  hs-source-dirs:   test
+  default-language: Haskell2010

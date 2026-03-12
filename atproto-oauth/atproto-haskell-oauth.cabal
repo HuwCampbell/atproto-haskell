@@ -1,0 +1,79 @@
+cabal-version:      3.0
+name:               atproto-haskell-oauth
+version:            0.1.0.0
+synopsis:           AT Protocol OAuth 2.1 client with DPoP
+description:
+  An OAuth 2.1 client for the AT Protocol, implementing the mandatory
+  extensions required by the ATProto OAuth specification:
+  .
+  * PKCE (RFC 7636, S256 only)
+  * Pushed Authorization Requests, PAR (RFC 9126)
+  * Demonstrated Proof of Possession, DPoP (RFC 9449)
+  * ATProto Client ID Metadata Documents
+  .
+  Authentication methods \"none\" (public client) and \"private_key_jwt\"
+  (confidential client) are both supported.
+license:            MIT
+license-file:       LICENSE
+author:             Huw Campbell
+maintainer:         huw.campbell@gmail.com
+category:           Network, Security
+build-type:         Simple
+extra-doc-files:    CHANGELOG.md
+
+common warnings
+  ghc-options: -Wall
+  default-extensions: OverloadedStrings
+
+library
+  import:           warnings
+  exposed-modules:
+      ATProto.OAuth
+      ATProto.OAuth.Types
+      ATProto.OAuth.PKCE
+      ATProto.OAuth.DPoP
+      ATProto.OAuth.ServerMetadata
+      ATProto.OAuth.Client
+  build-depends:
+      base            >= 4.14 && < 5
+    , aeson           >= 2.0  && < 2.3
+    , bytestring      >= 0.10 && < 0.13
+    , case-insensitive
+    , containers      >= 0.6  && < 0.9
+
+    -- jose-0.12 and crypton-1.x are incompatible: crypton >= 1.0 switched its
+    -- ByteArrayAccess typeclass source from the 'memory' package to 'ram'
+    -- (a fork of memory), while jose-0.12 imports ByteArrayAccess from 'memory'.
+    -- Pinning crypton to 0.34 keeps both packages on the same ByteArrayAccess
+    -- identity.
+    , crypton         >= 0.34 && < 1.0
+    , http-client     >= 0.7  && < 0.8
+    , http-client-tls >= 0.3  && < 0.5
+    , http-types      >= 0.12 && < 0.13
+    , jose            >= 0.12 && < 0.13
+    , lens            >= 5.0  && < 5.4
+    , memory          >= 0.14 && < 0.19
+    , text            >= 1.2  && < 2.2
+    , time            >= 1.9  && < 1.15
+    , transformers
+    , transformers-either
+  hs-source-dirs:   src
+  default-language: Haskell2010
+
+test-suite atproto-oauth-tests
+  import:           warnings
+  type:             exitcode-stdio-1.0
+  main-is:          Main.hs
+  other-modules:
+      Test.ATProto.OAuth.PKCE
+      Test.ATProto.OAuth.DPoP
+      Test.ATProto.OAuth.Types
+  build-depends:
+      base                    >= 4.14 && < 5
+    , aeson                   >= 2.0  && < 2.3
+    , bytestring              >= 0.10 && < 0.13
+    , text                    >= 1.2  && < 2.2
+    , atproto-haskell-oauth
+    , hedgehog                >= 1.4  && < 1.8
+  hs-source-dirs:   test
+  default-language: Haskell2010

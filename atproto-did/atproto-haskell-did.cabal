@@ -1,0 +1,55 @@
+cabal-version:      3.0
+name:               atproto-haskell-did
+version:            0.1.0.0
+synopsis:           AT Protocol DID document types and resolver
+description:
+  DID document data types with JSON parsing, and HTTP resolvers for the two
+  DID methods used by the AT Protocol: did:plc and did:web.
+license:            MIT
+license-file:       LICENSE
+author:             Huw Campbell
+maintainer:         huw.campbell@gmail.com
+category:           Network
+build-type:         Simple
+extra-doc-files:    CHANGELOG.md
+
+common warnings
+  ghc-options: -Wall
+
+library
+  import:           warnings
+  exposed-modules:
+      ATProto.DID
+      ATProto.DID.Document
+      ATProto.DID.Resolver
+      ATProto.DID.Resolver.PLC
+      ATProto.DID.Resolver.Web
+  build-depends:
+      base            >= 4.14 && < 5
+    , aeson           >= 2.0  && < 2.3
+    , bytestring      >= 0.10 && < 0.13
+    , http-client     >= 0.7  && < 0.8
+    , http-client-tls >= 0.3  && < 0.5
+    , http-types     >= 0.12 && < 0.13
+    , text            >= 1.2  && < 2.2
+  hs-source-dirs:   src
+  default-extensions: OverloadedStrings
+  default-language:   Haskell2010
+
+test-suite atproto-did-tests
+  import:           warnings
+  type:             exitcode-stdio-1.0
+  main-is:          Main.hs
+  other-modules:
+      Test.ATProto.DID.Document
+      Test.ATProto.DID.Resolver
+  build-depends:
+      base                  >= 4.14 && < 5
+    , aeson                 >= 2.0  && < 2.3
+    , bytestring            >= 0.10 && < 0.13
+    , text                  >= 1.2  && < 2.2
+    , atproto-haskell-did
+    , hedgehog              >= 1.4  && < 1.8
+  hs-source-dirs:   test
+  default-extensions: OverloadedStrings
+  default-language:   Haskell2010

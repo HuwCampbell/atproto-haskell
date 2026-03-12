@@ -1,0 +1,52 @@
+cabal-version:      3.0
+name:               atproto-haskell-repo
+version:            0.1.0.0
+synopsis:           AT Protocol com.atproto.repo XRPC method bindings
+description:
+  Typed Haskell bindings for the @com.atproto.repo.*@ XRPC methods, starting
+  with @com.atproto.repo.listRecords@.  Uses the 'XrpcClient' typeclass from
+  @atproto-haskell-xrpc@, so any concrete backend (e.g. the
+  @http-client-tls@ backend in @atproto-haskell-xrpc-http@) can be used.
+license:            MIT
+license-file:       LICENSE
+author:             Huw Campbell
+maintainer:         huw.campbell@gmail.com
+category:           Network
+build-type:         Simple
+extra-doc-files:    CHANGELOG.md
+
+common warnings
+  ghc-options: -Wall
+
+library
+  import:           warnings
+  exposed-modules:
+      ATProto.Repo
+      ATProto.Repo.ListRecords
+  build-depends:
+      base                   >= 4.14 && < 5
+    , aeson                  >= 2.0  && < 2.3
+    , bytestring             >= 0.10 && < 0.13
+    , containers             >= 0.6  && < 0.9
+    , text                   >= 1.2  && < 2.2
+    , atproto-haskell-xrpc
+  hs-source-dirs:   src
+  default-extensions: OverloadedStrings
+  default-language:   Haskell2010
+
+test-suite atproto-repo-tests
+  import:           warnings
+  type:             exitcode-stdio-1.0
+  main-is:          Main.hs
+  other-modules:
+      Test.ATProto.Repo.ListRecords
+  build-depends:
+      base                   >= 4.14 && < 5
+    , aeson                  >= 2.0  && < 2.3
+    , bytestring             >= 0.10 && < 0.13
+    , text                   >= 1.2  && < 2.2
+    , atproto-haskell-repo
+    , hedgehog               >= 1.4  && < 1.8
+  hs-source-dirs:   test
+  default-extensions: OverloadedStrings
+  default-language:   Haskell2010
