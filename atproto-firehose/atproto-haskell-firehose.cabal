@@ -1,0 +1,60 @@
+cabal-version:      3.0
+name:               atproto-haskell-firehose
+version:            0.1.0.0
+synopsis:           AT Protocol firehose WebSocket client
+description:
+  WebSocket client for the AT Protocol relay firehose
+  (@com.atproto.sync.subscribeRepos@).  Decodes DAG-CBOR frames, exposes
+  typed event ADTs, and provides an authenticated client that verifies
+  commit signatures and MST proofs.
+license:            MIT
+license-file:       LICENSE
+author:             Huw Campbell
+maintainer:         huw.campbell@gmail.com
+category:           Network
+build-type:         Simple
+extra-doc-files:    CHANGELOG.md
+
+common warnings
+  ghc-options: -Wall
+  default-extensions: OverloadedStrings
+
+library
+  import:           warnings
+  exposed-modules:
+      ATProto.Firehose
+      ATProto.Firehose.Events
+      ATProto.Firehose.Frame
+      ATProto.Firehose.Client
+  build-depends:
+      base                        >= 4.14 && < 5
+    , bytestring                  >= 0.10 && < 0.13
+    , containers                  >= 0.6  && < 0.8
+    , text                        >= 1.2  && < 2.2
+    , cborg                       >= 0.2  && < 0.3
+    , websockets                  >= 0.12 && < 0.14
+    , wuss                        >= 1.1  && < 2.1
+    , atproto-haskell-car
+    , atproto-haskell-mst
+    , atproto-haskell-repo-verify
+    , atproto-haskell-crypto
+    , atproto-haskell-did
+  hs-source-dirs:   src
+  default-language: Haskell2010
+
+test-suite atproto-firehose-tests
+  import:           warnings
+  type:             exitcode-stdio-1.0
+  main-is:          Main.hs
+  other-modules:
+      Test.ATProto.Firehose.Frame
+  build-depends:
+      base                        >= 4.14 && < 5
+    , bytestring                  >= 0.10 && < 0.13
+    , text                        >= 1.2  && < 2.2
+    , cborg                       >= 0.2  && < 0.3
+    , atproto-haskell-firehose
+    , atproto-haskell-car
+    , hedgehog                    >= 1.4  && < 1.8
+  hs-source-dirs:   test
+  default-language: Haskell2010
