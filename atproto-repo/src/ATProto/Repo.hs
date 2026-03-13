@@ -48,6 +48,11 @@ module ATProto.Repo
   , defaultListRecordsParams
   , ListRecordsResponse (..)
   , RepoRecord (..)
+    -- * @app.bsky.actor.getProfile@
+  , getProfile
+  , GetProfileParams (..)
+  , ProfileView (..)
   ) where
 
+import ATProto.Repo.GetProfile
 import ATProto.Repo.ListRecords

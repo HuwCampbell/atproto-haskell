@@ -12,6 +12,7 @@ module ATProto.XRPC.Types
   ) where
 
 import qualified Data.ByteString.Lazy as BL
+import           Data.CaseInsensitive (CI)
 import qualified Data.Map.Strict      as Map
 import qualified Data.Text            as T
 
@@ -22,7 +23,7 @@ data XrpcMethod
   deriving (Eq, Ord, Show)
 
 -- | HTTP headers as a simple 'Map'.
-type XrpcHeaders = Map.Map T.Text T.Text
+type XrpcHeaders = Map.Map (CI T.Text) T.Text
 
 -- | A prepared XRPC request.
 data XrpcRequest = XrpcRequest
@@ -51,4 +52,7 @@ data XrpcError = XrpcError
     -- ^ Optional human-readable message.
   , xrpcErrStatus  :: Int
     -- ^ HTTP status code.
+  , xrpcErrHeaders :: XrpcHeaders
+    -- ^ Response headers.  Useful for extracting the @DPoP-Nonce@ header
+    -- when the server returns a @use_dpop_nonce@ error.
   } deriving (Eq, Show)

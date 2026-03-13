@@ -24,6 +24,7 @@ module ATProto.OAuth.Types
 import qualified Data.Aeson  as Aeson
 import qualified Data.Text   as T
 import           Data.Time   (UTCTime)
+import           Network.HTTP.Types.URI (urlEncode)
 
 -- ---------------------------------------------------------------------------
 -- Authorization server metadata (RFC 8414 + extensions)
@@ -183,7 +184,7 @@ defaultClientMetadata :: T.Text -> [T.Text] -> OAuthClientMetadata
 defaultClientMetadata clientId redirectUris = OAuthClientMetadata
   { cmClientId                = clientId
   , cmRedirectUris            = redirectUris
-  , cmScope                   = "transition:generic"
+  , cmScope                   = "atproto"
   , cmGrantTypes              = ["authorization_code", "refresh_token"]
   , cmResponseTypes           = ["code"]
   , cmTokenEndpointAuthMethod = "none"

@@ -69,6 +69,7 @@ import qualified Data.Aeson.Types              as AesonTypes
 import qualified Data.ByteString              as BS
 import qualified Data.ByteString.Char8        as BC
 import qualified Data.ByteString.Lazy         as BL
+import qualified Data.Char                    as Char
 import qualified Data.CaseInsensitive         as CI
 import qualified Data.Map.Strict              as Map
 import qualified Data.Text                    as T
@@ -241,46 +242,31 @@ authorize
   :: OAuthClient
   -> AuthorizeParams
   -> IO (Either OAuthError AuthorizeResult)
-authorize client params = do
-  eDid <- resolveToDid client (apInput params)
-  case eDid of
-    Left err  -> return (Left err)
-    Right did -> do
-      let mgr = occManager (ocConfig client)
-          cm  = occMetadata (ocConfig client)
-      ePds <- resolvePds client did
-      case ePds of
-        Left err     -> return (Left err)
-        Right pdsUrl -> do
-          eIssuer <- getIssuerForPds mgr pdsUrl
-          case eIssuer of
-            Left err     -> return (Left err)
-            Right issuer -> do
-              eAsMeta <- fetchAuthorizationServerMetadata mgr issuer
-              case eAsMeta of
-                Left err     -> return (Left err)
-                Right asMeta -> do
-                  verifier  <- generateCodeVerifier
-                  let challenge = codeChallenge verifier
-                  dpopKey   <- generateDpopKey
-                  stateVal  <- generateJti
-                  ePar <- doPar client asMeta dpopKey challenge stateVal params
-                  case ePar of
-                    Left err     -> return (Left err)
-                    Right reqUri -> do
-                      let sd = StateData
-                            { sdIss          = issuer
-                            , sdDpopKey      = dpopKey
-                            , sdCodeVerifier = verifier
-                            , sdState        = stateVal
-                            , sdAppState     = apAppState params
-                            }
-                      storePutState (ocStateStore client) stateVal sd
-                      let authUrl = buildAuthRedirectUrl asMeta cm stateVal reqUri
-                      return (Right AuthorizeResult
-                        { arRedirectUrl = authUrl
-                        , arState       = stateVal
-                        })
+authorize client params = runEitherT $ do
+  did          <- newEitherT  (resolveToDid client (apInput params))
+  let mgr       = occManager  (ocConfig client)
+      cm        = occMetadata (ocConfig client)
+  pdsUrl       <- newEitherT  (resolvePds client did)
+  issuer       <- newEitherT  (getIssuerForPds mgr pdsUrl)
+  asMeta       <- newEitherT  (fetchAuthorizationServerMetadata mgr issuer)
+  verifier     <- lift $ generateCodeVerifier
+  let challenge = codeChallenge verifier
+  dpopKey      <- lift $ generateDpopKey
+  stateVal     <- lift $ generateJti
+  reqUri       <- newEitherT $ doPar client asMeta dpopKey challenge stateVal params
+  let sd = StateData
+        { sdIss          = issuer
+        , sdDpopKey      = dpopKey
+        , sdCodeVerifier = verifier
+        , sdState        = stateVal
+        , sdAppState     = apAppState params
+        }
+  lift $ storePutState (ocStateStore client) stateVal sd
+  let authUrl = buildAuthRedirectUrl asMeta cm stateVal reqUri
+  return $ AuthorizeResult
+    { arRedirectUrl = authUrl
+    , arState       = stateVal
+    }
 
 -- | POST a PAR request and return the @request_uri@.
 doPar
@@ -321,18 +307,32 @@ doPar client asMeta dpopKey challenge stateVal params =
                 , ("login_hint",            TE.encodeUtf8 (apInput params))
                 ]
               dpopHdr = [("DPoP", TE.encodeUtf8 proof)]
-          eResp <- doPost mgr (T.unpack endpoint) formBody dpopHdr
+          (respHdrs, eResp) <- doPost mgr (T.unpack endpoint) formBody dpopHdr
+          storeNonce client iss respHdrs
           case eResp of
             Left (OAuthServerError "use_dpop_nonce" _ _) -> do
-              -- Try once to extract a nonce from the error response and retry.
-              -- (The nonce is in the DPoP-Nonce header of the error response,
-              -- which doPost stores in the nonce cache if available.)
-              return (Left (OAuthDpopError
-                "Server requires DPoP nonce on first request; nonce not yet available"))
+              -- Retry once with the nonce the server sent in the error response.
+              newNonce <- fmap (Map.lookup iss) (readIORef (ocNonceCache client))
+              eProof2 <- createDpopProof dpopKey DpopClaims
+                { dcHtm   = "POST"
+                , dcHtu   = endpoint
+                , dcNonce = newNonce
+                , dcAth   = Nothing
+                }
+
+              case eProof2 of
+                Left err2 -> return (Left (OAuthDpopError err2))
+                Right proof2 -> do
+
+                  let dpopHdr2 = [("DPoP", TE.encodeUtf8 proof2)]
+                  (respHdrs2, eResp2) <- doPost mgr (T.unpack endpoint) formBody dpopHdr2
+                  storeNonce client iss respHdrs2
+                  case eResp2 of
+                    Left err2  -> return (Left err2)
+                    Right body -> do
+                      parseParResponse body
             Left err -> return (Left err)
-            Right (body, respHdrs) -> do
-              storeNonce client iss respHdrs
-              parseParResponse body
+            Right body -> parseParResponse body
 
 -- | Parse the @request_uri@ from a PAR response body.
 parseParResponse :: BL.ByteString -> IO (Either OAuthError T.Text)
@@ -540,11 +540,11 @@ postWithDpop client issuer dpopKey tokenUrl formBody mAt = do
     Left err -> return (Left (OAuthDpopError err))
     Right proof -> do
       let extraHdrs = dpopRequestHeaders proof mAt
-      eResp <- doPost (occManager (ocConfig client))
-                      (T.unpack tokenUrl) formBody extraHdrs
+      (respHdrs, eResp) <- doPost (occManager (ocConfig client))
+                                  (T.unpack tokenUrl) formBody extraHdrs
+      storeNonce client issuer respHdrs
       case eResp of
-        Right (body, respHdrs) -> do
-          storeNonce client issuer respHdrs
+        Right body ->
           return (Right (body, respHdrs))
         Left (OAuthServerError "use_dpop_nonce" _ _) -> do
           -- Retry once with the nonce the server sent in the error response.
@@ -554,11 +554,11 @@ postWithDpop client issuer dpopKey tokenUrl formBody mAt = do
             Left err2 -> return (Left (OAuthDpopError err2))
             Right proof2 -> do
               let extraHdrs2 = dpopRequestHeaders proof2 mAt
-              eResp2 <- doPost (occManager (ocConfig client))
-                               (T.unpack tokenUrl) formBody extraHdrs2
+              (respHdrs2, eResp2) <- doPost (occManager (ocConfig client))
+                                            (T.unpack tokenUrl) formBody extraHdrs2
+              storeNonce client issuer respHdrs2
               case eResp2 of
-                Right (body2, respHdrs2) -> do
-                  storeNonce client issuer respHdrs2
+                Right body2 ->
                   return (Right (body2, respHdrs2))
                 Left err2 -> return (Left err2)
         Left err -> return (Left err)
@@ -599,22 +599,22 @@ storeNonce client issuer hdrs =
       modifyIORef' (ocNonceCache client)
         (Map.insert issuer (TE.decodeUtf8Lenient nonce))
   where
-    normHeader (k, v) = (BC.map toLower k, v)
-    toLower c
-      | c >= 'A' && c <= 'Z' = toEnum (fromEnum c + 32)
-      | otherwise             = c
+    normHeader (k, v) = (BC.map Char.toLower k, v)
 
 -- | POST a URL-encoded form and return the body + response headers.
+--
+-- Response headers are returned on /both/ success and failure, so that
+-- the caller can always extract the @DPoP-Nonce@ header.
 doPost
   :: Manager
   -> String
   -> [(BS.ByteString, BS.ByteString)]  -- form fields
   -> [(BS.ByteString, BS.ByteString)]  -- extra request headers
-  -> IO (Either OAuthError (BL.ByteString, ResponseHeaders))
+  -> IO (ResponseHeaders, Either OAuthError BL.ByteString)
 doPost mgr url formFields extraHdrs =
-  catch go (\e -> return (Left (OAuthNetworkError (show (e :: SomeException)))))
+  catch go (\e -> return ([], Left (OAuthNetworkError (show (e :: SomeException)))))
   where
-    go :: IO (Either OAuthError (BL.ByteString, ResponseHeaders))
+    go :: IO (ResponseHeaders, Either OAuthError BL.ByteString)
     go = do
       req0 <- parseRequest url
       let encoded = renderQuery False (toQuery formFields)
@@ -633,12 +633,12 @@ doPost mgr url formFields extraHdrs =
           body     = responseBody resp
           respHdrs = map (\(k, v) -> (CI.original k, v)) (responseHeaders resp)
       if status >= 200 && status < 300
-        then return (Right (body, respHdrs))
-        else return (Left (parseError status body respHdrs))
+        then return (respHdrs, Right body)
+        else return (respHdrs, Left (parseError status body))
 
 -- | Parse an OAuth error from a failed response.
-parseError :: Int -> BL.ByteString -> ResponseHeaders -> OAuthError
-parseError status body _hdrs =
+parseError :: Int -> BL.ByteString -> OAuthError
+parseError status body =
   case (Aeson.eitherDecode body :: Either String Aeson.Value) of
     Right (Aeson.Object o) ->
       let get k = case AesonTypes.parseMaybe (Aeson..: k) o of
@@ -646,9 +646,7 @@ parseError status body _hdrs =
                     _                     -> Nothing
           errToken = maybe "Error" id (get "error")
           errMsg   = get "message"
-      in  -- Store the DPoP nonce from error responses too; the nonce cache
-          -- will be updated in the calling code via storeNonce.
-          OAuthServerError errToken errMsg status
+      in  OAuthServerError errToken errMsg status
     _ -> OAuthServerError "Error" Nothing status
 
 -- | Parse a token endpoint response into a 'TokenSet'.

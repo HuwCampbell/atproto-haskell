@@ -156,4 +156,5 @@ parseResponse body =
         { xrpcErrError   = "ParseError"
         , xrpcErrMessage = Just (T.pack msg)
         , xrpcErrStatus  = 200
+        , xrpcErrHeaders = Map.empty
         }

@@ -22,6 +22,7 @@ library
   import:           warnings
   exposed-modules:
       ATProto.Repo
+      ATProto.Repo.GetProfile
       ATProto.Repo.ListRecords
   build-depends:
       base                   >= 4.14 && < 5
@@ -39,6 +40,7 @@ test-suite atproto-repo-tests
   type:             exitcode-stdio-1.0
   main-is:          Main.hs
   other-modules:
+      Test.ATProto.Repo.GetProfile
       Test.ATProto.Repo.ListRecords
   build-depends:
       base                   >= 4.14 && < 5
