@@ -3,10 +3,9 @@ module Main (main) where
 import Hedgehog        (checkParallel)
 import System.Exit     (exitFailure, exitSuccess)
 
-import qualified Test.ATProto.Ipld.Json as Json
-import qualified Test.ATProto.Ipld.Cbor as Cbor
+import qualified Test.ATProto.Lex.Codec as LexCodec
 
 main :: IO ()
 main = do
-  results <- mapM checkParallel [Json.tests, Cbor.tests]
+  results <- mapM checkParallel [LexCodec.tests]
   if and results then exitSuccess else exitFailure
