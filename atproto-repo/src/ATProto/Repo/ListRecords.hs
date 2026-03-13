@@ -29,8 +29,8 @@ import           ATProto.Ipld.Value      (LexValue)
 import           ATProto.Lex.Codec       (Codec)
 import qualified ATProto.Lex.Codec       as Codec
 import qualified ATProto.Lex.Json        as LexJson
-import ATProto.XRPC.Client (XrpcClient (..))
-import ATProto.XRPC.Types  (XrpcError (..), XrpcMethod (..), XrpcRequest (..), XrpcResponse (..))
+import           ATProto.XRPC.Client (XrpcClient (..))
+import           ATProto.XRPC.Types  (XrpcError (..), XrpcMethod (..), XrpcRequest (..), XrpcResponse (..))
 
 -- ---------------------------------------------------------------------------
 -- Request

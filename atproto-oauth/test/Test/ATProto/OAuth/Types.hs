@@ -77,7 +77,7 @@ prop_defaultClientMetadataDefaults :: Property
 prop_defaultClientMetadataDefaults = withTests 1 . property $ do
   let cm = defaultClientMetadata "https://myapp.example.com"
              ["https://myapp.example.com/callback"]
-  cmScope cm                   === "atproto transition:generic"
+  cmScope cm                   === "atproto"
   cmTokenEndpointAuthMethod cm === "none"
   cmDpopBoundAccessTokens cm   === True
   cmGrantTypes cm              === ["authorization_code", "refresh_token"]
