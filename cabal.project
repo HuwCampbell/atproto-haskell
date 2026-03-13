@@ -16,5 +16,6 @@ packages:
   atproto-repo-verify/
   atproto-firehose/
   atproto-service-auth/
+  atproto-tap/
 
 with-compiler: ghc-9.12.2
