@@ -1,0 +1,59 @@
+cabal-version:      3.0
+name:               atproto-haskell-mst
+version:            0.1.0.0
+synopsis:           AT Protocol Merkle Search Tree implementation
+description:
+  Merkle Search Tree (MST) implementation for the AT Protocol.  Provides
+  binary node decoding, layer computation, point lookup, tree diff, and
+  proof verification.
+license:            MIT
+license-file:       LICENSE
+author:             Huw Campbell
+maintainer:         huw.campbell@gmail.com
+category:           Network
+build-type:         Simple
+extra-doc-files:    CHANGELOG.md
+
+common warnings
+  ghc-options: -Wall
+  default-extensions: OverloadedStrings
+
+library
+  import:           warnings
+  exposed-modules:
+      ATProto.MST
+      ATProto.MST.Types
+      ATProto.MST.Node
+      ATProto.MST.Layer
+      ATProto.MST.Get
+      ATProto.MST.Diff
+      ATProto.MST.Verify
+  build-depends:
+      base                  >= 4.14 && < 5
+    , bytestring            >= 0.10 && < 0.13
+    , containers            >= 0.6  && < 0.8
+    , text                  >= 1.2  && < 2.2
+    , cborg                 >= 0.2  && < 0.3
+    , crypton               >= 0.32 && < 1.2
+    , memory                >= 0.14 && < 0.19
+    , atproto-haskell-car
+  hs-source-dirs:   src
+  default-language: Haskell2010
+
+test-suite atproto-mst-tests
+  import:           warnings
+  type:             exitcode-stdio-1.0
+  main-is:          Main.hs
+  other-modules:
+      Test.ATProto.MST.Layer
+      Test.ATProto.MST.Tree
+  build-depends:
+      base                  >= 4.14 && < 5
+    , bytestring            >= 0.10 && < 0.13
+    , containers            >= 0.6  && < 0.8
+    , text                  >= 1.2  && < 2.2
+    , atproto-haskell-mst
+    , atproto-haskell-car
+    , hedgehog              >= 1.4  && < 1.8
+  hs-source-dirs:   test
+  default-language: Haskell2010

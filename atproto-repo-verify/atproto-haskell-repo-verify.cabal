@@ -1,0 +1,61 @@
+cabal-version:      3.0
+name:               atproto-haskell-repo-verify
+version:            0.1.0.0
+synopsis:           AT Protocol repository commit verification
+description:
+  Commit signature verification and MST proof checking for AT Protocol
+  repository events.  Decodes CAR files, verifies ECDSA commit signatures,
+  and validates per-record MST proofs.
+license:            MIT
+license-file:       LICENSE
+author:             Huw Campbell
+maintainer:         huw.campbell@gmail.com
+category:           Network, Cryptography
+build-type:         Simple
+extra-doc-files:    CHANGELOG.md
+
+common warnings
+  ghc-options: -Wall
+  default-extensions: OverloadedStrings
+
+library
+  import:           warnings
+  exposed-modules:
+      ATProto.Repo.Verify
+      ATProto.Repo.Verify.Types
+      ATProto.Repo.Verify.Key
+      ATProto.Repo.Verify.Commit
+  build-depends:
+      base                      >= 4.14 && < 5
+    , bytestring                >= 0.10 && < 0.13
+    , containers                >= 0.6  && < 0.8
+    , text                      >= 1.2  && < 2.2
+    , cborg                     >= 0.2  && < 0.3
+    , atproto-haskell-car
+    , atproto-haskell-mst
+    , atproto-haskell-crypto
+    , atproto-haskell-did
+  hs-source-dirs:   src
+  default-language: Haskell2010
+
+test-suite atproto-repo-verify-tests
+  import:           warnings
+  type:             exitcode-stdio-1.0
+  main-is:          Main.hs
+  other-modules:
+      Test.ATProto.Repo.Verify.Key
+      Test.ATProto.Repo.Verify.Commit
+  build-depends:
+      base                      >= 4.14 && < 5
+    , bytestring                >= 0.10 && < 0.13
+    , containers                >= 0.6  && < 0.8
+    , text                      >= 1.2  && < 2.2
+    , cborg                     >= 0.2  && < 0.3
+    , atproto-haskell-repo-verify
+    , atproto-haskell-crypto
+    , atproto-haskell-did
+    , atproto-haskell-car
+    , atproto-haskell-mst
+    , hedgehog                  >= 1.4  && < 1.8
+  hs-source-dirs:   test
+  default-language: Haskell2010

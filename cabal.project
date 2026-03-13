@@ -11,5 +11,9 @@ packages:
   atproto-repo/
   atproto-oauth/
   examples/oauth-cli/
+  atproto-car/
+  atproto-mst/
+  atproto-repo-verify/
+  atproto-firehose/
 
 with-compiler: ghc-9.12.2

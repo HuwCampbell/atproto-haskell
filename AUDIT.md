@@ -193,3 +193,111 @@ The following items from the reference packages are not yet implemented:
 - ToJSON instances for Lexicon types
 - Remaining com.atproto.repo.* XRPC bindings
 - @atproto/oauth-client (planned; see docs/oauth-plan.md)
+
+
+atproto-haskell-car  (@atproto/repo — CAR parsing)
+----------------------------------------------------
+
+CAR v1 (Content Addressable aRchive) parsing is fully implemented.
+The parser covers the varint-length-prefixed header (DAG-CBOR map with
+version and roots fields), CBOR tag-42 CID encoding/decoding, and the
+block sequence.  Binary CIDv1 parsing dynamically determines CID length
+by reading version, codec, and multihash header varints.  Display uses
+multibase base32lower (prefix 'b'), compatible with the existing
+string-based ATProto.Ipld.Value.Cid type.
+
+readCar handles zero or more roots; readCarWithRoot enforces exactly
+one root.  The BlockMap type (Map CidBytes ByteString) is the central
+data structure consumed by atproto-haskell-mst.
+
+Gap: no CAR v2 support (the reference repo package supports both).
+
+
+atproto-haskell-mst  (@atproto/repo — MST)
+-------------------------------------------
+
+Merkle Search Tree operations are fully implemented:
+
+  - Node decoding: NodeData and TreeEntry from DAG-CBOR, including
+    nullable tag-42 CID fields for left subtrees and right subtrees.
+  - Layer computation: leadingZerosOnHash counts leading 2-bit zero
+    pairs in the SHA-256 digest, matching the reference exactly.
+    Test vectors from the TypeScript suite are verified.
+  - Point lookup: get performs a correct flat-entry interleaved walk
+    (leftmost subtree, leaf, right subtree for each entry) and
+    descends into subtrees as needed.
+  - Tree diff: mstDiff collects all leaves from both trees in sorted
+    order and computes WCreate/WUpdate/WDelete descriptors.  Equal
+    subtree CIDs are short-circuited (subtrees not re-walked).
+  - Proof verification: verifyProofs checks each RecordOp against the
+    live MST, comparing found CIDs with claimed CIDs.
+
+Gap: the diff implementation walks full leaf lists rather than doing
+a true simultaneous walk with CID-equality subtree pruning at the
+node level.  For large trees with small diffs this is less efficient
+than the reference, but produces correct results.
+
+Gap: test coverage uses single-node trees only.  The 11-key known-
+root-CID test vectors from the TypeScript mst.test.ts are not yet
+verified against hand-crafted fixtures.
+
+
+atproto-haskell-repo-verify  (@atproto/repo — commit verification)
+-------------------------------------------------------------------
+
+Full commit verification pipeline:
+
+  - decodeCommit: DAG-CBOR map decoding for the Commit type, handling
+    optional prev field (nullable tag-42 CID) and all required fields.
+  - resolveAtprotoKey: extracts the #atproto VerificationMethod from
+    a DidDocument and decodes the multibase public key via
+    ATProto.Crypto.Multikey.decodeMultikey.
+  - verifyCommitSig: re-encodes the unsigned commit in canonical
+    DAG-CBOR field order (did, rev, data, prev, version) and calls
+    ATProto.Crypto.EC.verify Strict.
+  - verifyCommitCar: full pipeline — parse CAR, decode commit, assert
+    DID, extract key, verify sig, verify MST proofs, return diff.
+
+Gap: encodeUnsignedCommit always includes the prev field (as CBOR
+null when absent).  Legacy v2 commits that omit prev entirely will
+produce a signature mismatch.  V3 commits (current standard) always
+include prev and are handled correctly.
+
+Gap: no caching of resolved DID documents.  The authenticated
+firehose client calls afcResolveDid twice on key-rotation failures;
+callers must implement caching to avoid excessive network requests.
+
+
+atproto-haskell-firehose  (@atproto/sync — Firehose)
+------------------------------------------------------
+
+WebSocket firehose client with event decoding and optional commit
+verification:
+
+  - Event ADTs: CommitEvent, IdentityEvent, AccountEvent, SyncEvent,
+    InfoEvent, FirehoseEvent with FEUnknown for forward compatibility.
+  - RepoOp with OpAction (create/update/delete) and nullable text CID.
+  - decodeFrame: DAG-CBOR frame decoder dispatching on the t field in
+    the header map.  CID fields are decoded from tag-42 bytes and
+    re-encoded as multibase text.
+  - runFirehose: WSS client via wuss, cursor tracking in IORef,
+    auto-reconnect with last-seen sequence number.
+  - runAuthFirehose: per-commit verification using verifyCommitCar,
+    tooBig guard, key-rotation retry (two DID resolves on VerifyBadSig).
+
+Gap: toRecordOp sets ropCid = Nothing for all ops.  For creates and
+updates the text CID from RepoOp.ropCid should be decoded to CidBytes
+and compared against the MST.  Currently verifyProofs only confirms
+presence/absence, not the exact record CID.  Fixing this requires a
+textCidToBinary helper (multibase base32lower decode).
+
+Gap: no cursor persistence.  Reconnection uses the in-memory last-seen
+sequence number.  After a process restart the client resumes from the
+configured initial cursor (or the beginning of the firehose).
+
+Gap: no connection backoff/retry delay.  Rapid reconnection on error
+may be rate-limited by the relay.
+
+Gap: #identity events are not cross-validated against the DID
+document's alsoKnownAs field (requires bidirectional handle
+verification not yet present in atproto-haskell-identity).
