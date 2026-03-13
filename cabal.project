@@ -17,5 +17,6 @@ packages:
   atproto-firehose/
   atproto-service-auth/
   atproto-tap/
+  examples/statusphere-og/
 
 with-compiler: ghc-9.12.2
