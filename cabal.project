@@ -15,5 +15,6 @@ packages:
   atproto-mst/
   atproto-repo-verify/
   atproto-firehose/
+  atproto-service-auth/
 
 with-compiler: ghc-9.12.2
