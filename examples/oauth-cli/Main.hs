@@ -95,7 +95,7 @@ run handle = do
   --
   -- For CLI / loopback apps the client_id is "http://localhost" as
   -- specified by the ATProto OAuth loopback client spec.
-  let clientMeta = (defaultClientMetadata "http://localhost" [callbackUrl])
+  let clientMeta = (defaultClientMetadata "http://localhost?scope=atproto%20transition%3Ageneric" [callbackUrl])
         { cmClientName      = Just "atproto-haskell OAuth CLI demo"
         , cmApplicationType = Just "native"
         }
@@ -118,7 +118,7 @@ run handle = do
   eAuth <- authorize oauthClient AuthorizeParams
     { apInput       = handle
     , apRedirectUri = callbackUrl
-    , apScope       = "atproto" --  transition:generic"
+    , apScope       = "atproto transition:generic"
     , apAppState    = Nothing
     }
 
@@ -216,7 +216,7 @@ instance XrpcClient DpopXrpcClient where
       Left err
         | xrpcErrError err == "use_dpop_nonce" -> do
             -- Extract the nonce from the error response and retry once.
-            let mNonce = Map.lookup "DPoP-Nonce" (xrpcErrHeaders err)
+            let mNonce = Map.lookup "dpop-nonce" (xrpcErrHeaders err)
             case mNonce of
               Nothing    -> return (Left err)
               Just nonce -> do

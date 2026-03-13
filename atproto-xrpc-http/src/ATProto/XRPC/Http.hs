@@ -45,6 +45,7 @@ import qualified Data.Aeson              as Aeson
 import qualified Data.ByteString.Char8   as BC
 import qualified Data.ByteString.Lazy    as BL
 import qualified Data.CaseInsensitive    as CI
+import           Data.CaseInsensitive    (CI)
 import qualified Data.Map.Strict         as Map
 import qualified Data.Text               as T
 import qualified Data.Text.Encoding      as TE
@@ -95,10 +96,11 @@ runHttpXrpc
 runHttpXrpc client xrpcReq = do
   req  <- buildRequest client xrpcReq
   resp <- httpLbs req (httpXrpcManager client)
+
   let status = statusCode (responseStatus resp)
       body   = responseBody resp
       hdrs   = Map.fromList
-                 [ (TE.decodeUtf8Lenient (CI.original k), TE.decodeUtf8Lenient v)
+                 [ (CI.map TE.decodeUtf8Lenient k, TE.decodeUtf8Lenient v)
                  | (k, v) <- responseHeaders resp
                  ]
   if status >= 200 && status < 300
@@ -125,7 +127,7 @@ buildRequest client xrpcReq = do
       body = case xrpcReqBody xrpcReq of
                Nothing -> RequestBodyLBS BL.empty
                Just b  -> RequestBodyLBS b
-      hdrs = [ (CI.mk (TE.encodeUtf8 k), TE.encodeUtf8 v)
+      hdrs = [ (CI.map TE.encodeUtf8 k, TE.encodeUtf8 v)
              | (k, v) <- Map.toList (xrpcReqHeaders xrpcReq)
              ]
   base <- parseRequest url
@@ -140,7 +142,7 @@ buildRequest client xrpcReq = do
 --
 -- The AT Protocol mandates @{ \"error\": \"...\", \"message\": \"...\" }@.
 -- Falls back to a generic error token when the body is not valid JSON.
-parseXrpcError :: Int -> Map.Map T.Text T.Text -> BL.ByteString -> XrpcError
+parseXrpcError :: Int -> Map.Map (CI T.Text) T.Text -> BL.ByteString -> XrpcError
 parseXrpcError status hdrs body =
   case (Aeson.eitherDecode body :: Either String (Map.Map T.Text Aeson.Value)) of
     Right m ->
