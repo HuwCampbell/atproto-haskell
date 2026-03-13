@@ -1,3 +1,5 @@
+{-# LANGUAGE TupleSections     #-}
+{-# LANGUAGE OverloadedStrings #-}
 -- | Core data types for the ATProto OAuth 2.1 client.
 --
 -- This module defines the request\/response data types covering:
@@ -15,16 +17,18 @@ module ATProto.OAuth.Types
     -- * Client metadata
   , OAuthClientMetadata (..)
   , defaultClientMetadata
+  , loopbackClientMetadata
     -- * Token and session
   , TokenSet (..)
     -- * Error
   , OAuthError (..)
   ) where
 
-import qualified Data.Aeson  as Aeson
-import qualified Data.Text   as T
-import           Data.Time   (UTCTime)
-import           Network.HTTP.Types.URI (urlEncode)
+import qualified Data.Aeson             as Aeson
+import qualified Data.Text              as T
+import qualified Data.Text.Encoding     as TE
+import           Data.Time              (UTCTime)
+import           Network.HTTP.Types.URI (renderQuery, queryTextToQuery)
 
 -- ---------------------------------------------------------------------------
 -- Authorization server metadata (RFC 8414 + extensions)
@@ -175,6 +179,36 @@ data OAuthClientMetadata = OAuthClientMetadata
     -- ^ @jwks_uri@ – URL of the client's JSON Web Key Set.
     -- Required when @token_endpoint_auth_method@ is @\"private_key_jwt\"@.
   } deriving (Eq, Show)
+
+-- | A public client metadata template particularly for localhost.
+--
+-- There are a few undocumented features for localhost endpoints,
+-- in that the hostname needs to include scopes and redirects in
+-- its query params as well as its client metadata.
+loopbackClientMetadata :: T.Text -> [T.Text] -> OAuthClientMetadata
+loopbackClientMetadata scopes redirectUris =
+  let
+    scopePart =
+      [("scope", Just scopes) | scopes /= "atproto"]
+
+    redirectParts =
+      [("redirect_uri", Just uri) | uri <- redirectUris]
+
+    allParts =
+      queryTextToQuery $
+        scopePart <> redirectParts
+
+    encodedScopes =
+      if null allParts then "" else renderQuery True allParts
+
+    clientId =
+      "http://localhost" <> encodedScopes
+  in
+    (defaultClientMetadata (TE.decodeUtf8Lenient clientId) redirectUris) {
+      cmScope = scopes,
+      cmRedirectUris = redirectUris,
+      cmApplicationType = Just "native"
+    }
 
 -- | A public client metadata template with sensible defaults.
 --

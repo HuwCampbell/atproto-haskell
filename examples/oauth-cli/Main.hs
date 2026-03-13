@@ -40,7 +40,7 @@ import           ATProto.OAuth            (AuthorizeParams (..),
                                            Session (..),
                                            TokenSet (..),
                                            authorize, callback,
-                                           defaultClientMetadata,
+                                           loopbackClientMetadata,
                                            newInMemorySessionStore,
                                            newInMemoryStateStore,
                                            newOAuthClient,
@@ -80,16 +80,14 @@ run handle = do
 
   -- Start a local callback server on a random available port.
   (port, callbackMVar) <- startCallbackServer
-  let callbackUrl = "http://127.0.0.1:" <> T.pack (show port) <> "/"
+  let callbackUrl = "http://127.0.0.1:" <> T.pack (show port) <> "/callback"
 
   -- Configure the OAuth client.
   --
   -- For CLI / loopback apps the client_id is "http://localhost" as
   -- specified by the ATProto OAuth loopback client spec.
-  let clientMeta = (defaultClientMetadata "http://localhost?scope=atproto%20transition%3Ageneric" [callbackUrl])
-        { cmClientName      = Just "atproto-haskell OAuth CLI demo"
-        , cmApplicationType = Just "native"
-        }
+  let clientMeta = (loopbackClientMetadata "atproto transition:generic" [callbackUrl])
+        { cmClientName      = Just "atproto-haskell OAuth CLI demo" }
 
   stateStore   <- newInMemoryStateStore
   sessionStore <- newInMemorySessionStore
