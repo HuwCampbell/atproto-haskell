@@ -1,3 +1,4 @@
+{-# OPTIONS_GHC -Wno-orphans #-}
 -- | JSON parsing for Lexicon schema documents.
 --
 -- Provides 'Data.Aeson.FromJSON' instances for all Lexicon types so that

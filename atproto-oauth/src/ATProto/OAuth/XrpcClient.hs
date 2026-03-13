@@ -1,6 +1,6 @@
 -- | DPoP-aware XRPC client for ATProto OAuth sessions.
 --
--- After completing the OAuth flow, use 'newOAuthXrpcClient' to obtain an
+--  After completing the OAuth flow, use 'newOAuthXrpcClient' to obtain an
 -- 'OAuthXrpcClient' that transparently handles:
 --
 -- * DPoP proof generation per request
