@@ -15,15 +15,20 @@ module ATProto.Repo.GetProfile
     GetProfileParams (..)
     -- * Response
   , ProfileView (..)
+    -- * Codec
+  , profileViewCodec
     -- * Client function
   , getProfile
   ) where
 
-import qualified Data.Aeson              as Aeson
 import qualified Data.ByteString.Lazy    as BL
 import qualified Data.Map.Strict         as Map
 import qualified Data.Text               as T
+import           Data.Int                (Int64)
 
+import           ATProto.Lex.Codec       (Codec)
+import qualified ATProto.Lex.Codec       as Codec
+import qualified ATProto.Lex.Json        as LexJson
 import ATProto.XRPC.Client (XrpcClient (..))
 import ATProto.XRPC.Types  (XrpcError (..), XrpcMethod (..), XrpcRequest (..), XrpcResponse (..))
 
@@ -44,8 +49,7 @@ data GetProfileParams = GetProfileParams
 
 -- | A subset of the @app.bsky.actor.defs#profileViewDetailed@ schema.
 --
--- Only the fields most commonly needed are decoded here; the raw JSON
--- is available via 'pvRaw' for anything not explicitly modelled.
+-- Only the fields most commonly needed are decoded here.
 data ProfileView = ProfileView
   { pvDid            :: T.Text
     -- ^ The account's DID.
@@ -54,28 +58,30 @@ data ProfileView = ProfileView
   , pvDisplayName    :: Maybe T.Text
     -- ^ Display name, if set.
   , pvDescription    :: Maybe T.Text
-    -- ^ Profile description / bio, if set.
+    -- ^ Profile description \/ bio, if set.
   , pvAvatar         :: Maybe T.Text
     -- ^ URL of the avatar image, if set.
-  , pvFollowersCount :: Maybe Int
+  , pvFollowersCount :: Maybe Int64
     -- ^ Number of followers, when available.
-  , pvFollowsCount   :: Maybe Int
+  , pvFollowsCount   :: Maybe Int64
     -- ^ Number of accounts followed, when available.
-  , pvPostsCount     :: Maybe Int
+  , pvPostsCount     :: Maybe Int64
     -- ^ Number of posts, when available.
   } deriving (Eq, Show)
 
-instance Aeson.FromJSON ProfileView where
-  parseJSON = Aeson.withObject "ProfileView" $ \o ->
-    ProfileView
-      <$> o Aeson..:  "did"
-      <*> o Aeson..:  "handle"
-      <*> o Aeson..:? "displayName"
-      <*> o Aeson..:? "description"
-      <*> o Aeson..:? "avatar"
-      <*> o Aeson..:? "followersCount"
-      <*> o Aeson..:? "followsCount"
-      <*> o Aeson..:? "postsCount"
+-- | Codec for the @getProfile@ response body.
+profileViewCodec :: Codec ProfileView
+profileViewCodec =
+    Codec.record "app.bsky.actor.defs#profileViewDetailed" $
+        ProfileView
+            <$> Codec.requiredField "did"            Codec.did    (.pvDid)
+            <*> Codec.requiredField "handle"         Codec.handle (.pvHandle)
+            <*> Codec.optionalField "displayName"    Codec.text   (.pvDisplayName)
+            <*> Codec.optionalField "description"    Codec.text   (.pvDescription)
+            <*> Codec.optionalField "avatar"         Codec.uri    (.pvAvatar)
+            <*> Codec.optionalField "followersCount" Codec.int    (.pvFollowersCount)
+            <*> Codec.optionalField "followsCount"   Codec.int    (.pvFollowsCount)
+            <*> Codec.optionalField "postsCount"     Codec.int    (.pvPostsCount)
 
 -- ---------------------------------------------------------------------------
 -- Client function
@@ -123,7 +129,7 @@ getProfile client params = do
 -- | Decode the JSON response body into a 'ProfileView'.
 parseResponse :: BL.ByteString -> Either XrpcError ProfileView
 parseResponse body =
-  case Aeson.eitherDecode body of
+  case LexJson.decode profileViewCodec body of
     Right r  -> Right r
     Left msg -> Left XrpcError
         { xrpcErrError   = "ParseError"

@@ -10,18 +10,25 @@ module ATProto.Repo.ListRecords
   ( -- * Request parameters
     ListRecordsParams (..)
   , defaultListRecordsParams
+  , toQueryParams
     -- * Response
   , ListRecordsResponse (..)
   , RepoRecord (..)
+    -- * Codecs
+  , repoRecordCodec
+  , listRecordsResponseCodec
     -- * Client function
   , listRecords
   ) where
 
-import qualified Data.Aeson              as Aeson
 import qualified Data.ByteString.Lazy    as BL
 import qualified Data.Map.Strict         as Map
 import qualified Data.Text               as T
 
+import           ATProto.Ipld.Value      (LexValue)
+import           ATProto.Lex.Codec       (Codec)
+import qualified ATProto.Lex.Codec       as Codec
+import qualified ATProto.Lex.Json        as LexJson
 import ATProto.XRPC.Client (XrpcClient (..))
 import ATProto.XRPC.Types  (XrpcError (..), XrpcMethod (..), XrpcRequest (..), XrpcResponse (..))
 
@@ -78,7 +85,7 @@ data RepoRecord = RepoRecord
     -- @\"at:\/\/did:plc:abc\/app.bsky.feed.post\/3k7bj\"@.
   , rrCid   :: T.Text
     -- ^ CID of the record's current version.
-  , rrValue :: Aeson.Value
+  , rrValue :: LexValue
     -- ^ The raw record value (type depends on the collection).
   } deriving (Eq, Show)
 
@@ -90,18 +97,22 @@ data ListRecordsResponse = ListRecordsResponse
     -- ^ The returned records.
   } deriving (Eq, Show)
 
-instance Aeson.FromJSON RepoRecord where
-  parseJSON = Aeson.withObject "RepoRecord" $ \o ->
-    RepoRecord
-      <$> o Aeson..: "uri"
-      <*> o Aeson..: "cid"
-      <*> o Aeson..: "value"
+-- | Codec for a single @listRecords@ record entry.
+repoRecordCodec :: Codec RepoRecord
+repoRecordCodec =
+    Codec.record "com.atproto.repo.listRecords#repoRecord" $
+        RepoRecord
+            <$> Codec.requiredField "uri"   Codec.atUri     (.rrUri)
+            <*> Codec.requiredField "cid"   Codec.text      (.rrCid)
+            <*> Codec.requiredField "value" Codec.lexValue  (.rrValue)
 
-instance Aeson.FromJSON ListRecordsResponse where
-  parseJSON = Aeson.withObject "ListRecordsResponse" $ \o ->
-    ListRecordsResponse
-      <$> o Aeson..:? "cursor"
-      <*> o Aeson..:  "records"
+-- | Codec for the @listRecords@ response body.
+listRecordsResponseCodec :: Codec ListRecordsResponse
+listRecordsResponseCodec =
+    Codec.record "com.atproto.repo.listRecords#response" $
+        ListRecordsResponse
+            <$> Codec.optionalField "cursor"  Codec.text                          (.lrrCursor)
+            <*> Codec.requiredField "records" (Codec.array repoRecordCodec)       (.lrrRecords)
 
 -- ---------------------------------------------------------------------------
 -- Client function
@@ -150,7 +161,7 @@ listRecords client params = do
 -- | Decode the JSON response body into a 'ListRecordsResponse'.
 parseResponse :: BL.ByteString -> Either XrpcError ListRecordsResponse
 parseResponse body =
-  case Aeson.eitherDecode body of
+  case LexJson.decode listRecordsResponseCodec body of
     Right r  -> Right r
     Left msg -> Left XrpcError
         { xrpcErrError   = "ParseError"

@@ -1,9 +1,9 @@
 module Test.ATProto.Repo.GetProfile (tests) where
 
-import qualified Data.Aeson                 as Aeson
 import qualified Data.ByteString.Lazy.Char8 as BLC
 import           Hedgehog
 
+import ATProto.Lex.Json      (decode)
 import ATProto.Repo.GetProfile
 
 -- ---------------------------------------------------------------------------
@@ -41,7 +41,7 @@ minimalResponse = BLC.pack $ unwords
 -- | The sample response parses to the expected fields.
 prop_parseSampleResponse :: Property
 prop_parseSampleResponse = withTests 1 . property $ do
-  prof <- evalEither (Aeson.eitherDecode sampleResponse)
+  prof <- evalEither (decode profileViewCodec sampleResponse)
   pvDid            prof === "did:plc:ewvi7nxzyoun6zhhandbv25b"
   pvHandle         prof === "haileyok.com"
   pvDisplayName    prof === Just "Hailey"
@@ -54,7 +54,7 @@ prop_parseSampleResponse = withTests 1 . property $ do
 -- | A minimal response parses with optional fields as Nothing.
 prop_parseMinimalResponse :: Property
 prop_parseMinimalResponse = withTests 1 . property $ do
-  prof <- evalEither (Aeson.eitherDecode minimalResponse)
+  prof <- evalEither (decode profileViewCodec minimalResponse)
   pvDid            prof === "did:plc:abc"
   pvHandle         prof === "alice.bsky.social"
   pvDisplayName    prof === Nothing
@@ -68,7 +68,7 @@ prop_parseMinimalResponse = withTests 1 . property $ do
 prop_missingDidFails :: Property
 prop_missingDidFails = withTests 1 . property $ do
   let bad = BLC.pack "{\"handle\": \"alice.bsky.social\"}"
-  case (Aeson.eitherDecode bad :: Either String ProfileView) of
+  case decode profileViewCodec bad of
     Left  _ -> success
     Right _ -> failure
 
@@ -76,7 +76,7 @@ prop_missingDidFails = withTests 1 . property $ do
 prop_missingHandleFails :: Property
 prop_missingHandleFails = withTests 1 . property $ do
   let bad = BLC.pack "{\"did\": \"did:plc:abc\"}"
-  case (Aeson.eitherDecode bad :: Either String ProfileView) of
+  case decode profileViewCodec bad of
     Left  _ -> success
     Right _ -> failure
 

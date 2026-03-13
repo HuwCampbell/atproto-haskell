@@ -3,6 +3,7 @@ packages:
   atproto-did/
   atproto-identity/
   atproto-ipld/
+  atproto-lex/
   atproto-lexicon/
   atproto-crypto/
   atproto-xrpc/

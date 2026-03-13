@@ -1,12 +1,12 @@
 module Test.ATProto.Repo.ListRecords (tests) where
 
-import qualified Data.Aeson                 as Aeson
 import qualified Data.ByteString.Lazy.Char8 as BLC
 import qualified Data.Text                  as T
 import           Hedgehog
 import qualified Hedgehog.Gen               as Gen
 import qualified Hedgehog.Range             as Range
 
+import ATProto.Lex.Json        (decode)
 import ATProto.Repo.ListRecords
 
 -- ---------------------------------------------------------------------------
@@ -42,7 +42,7 @@ emptyResponse = BLC.pack "{\"records\": []}"
 -- | The sample response parses to the expected fields.
 prop_parseSampleResponse :: Property
 prop_parseSampleResponse = withTests 1 . property $ do
-  resp <- evalEither (Aeson.eitherDecode sampleResponse)
+  resp <- evalEither (decode listRecordsResponseCodec sampleResponse)
   lrrCursor  resp === Just "3k7bj3abc"
   length (lrrRecords resp) === 2
   let r0 = head (lrrRecords resp)
@@ -52,7 +52,7 @@ prop_parseSampleResponse = withTests 1 . property $ do
 -- | An empty records list parses with no cursor.
 prop_parseEmptyResponse :: Property
 prop_parseEmptyResponse = withTests 1 . property $ do
-  resp <- evalEither (Aeson.eitherDecode emptyResponse)
+  resp <- evalEither (decode listRecordsResponseCodec emptyResponse)
   lrrCursor  resp === Nothing
   lrrRecords resp === []
 
@@ -60,7 +60,7 @@ prop_parseEmptyResponse = withTests 1 . property $ do
 prop_missingRecordsFails :: Property
 prop_missingRecordsFails = withTests 1 . property $ do
   let bad = BLC.pack "{\"cursor\": \"abc\"}"
-  case (Aeson.eitherDecode bad :: Either String ListRecordsResponse) of
+  case decode listRecordsResponseCodec bad of
     Left  _ -> success
     Right _ -> failure
 
