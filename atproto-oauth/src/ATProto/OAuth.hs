@@ -26,6 +26,8 @@ module ATProto.OAuth
   , module ATProto.OAuth.ServerMetadata
     -- * Client
   , module ATProto.OAuth.Client
+    -- * XRPC client
+  , module ATProto.OAuth.XrpcClient
   ) where
 
 import ATProto.OAuth.Types
@@ -33,3 +35,4 @@ import ATProto.OAuth.PKCE
 import ATProto.OAuth.DPoP
 import ATProto.OAuth.ServerMetadata
 import ATProto.OAuth.Client
+import ATProto.OAuth.XrpcClient

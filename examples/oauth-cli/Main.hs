@@ -16,12 +16,8 @@ module Main (main) where
 import           Control.Concurrent       (MVar, forkIO, newEmptyMVar,
                                            putMVar, takeMVar)
 import           Control.Monad            (join)
-import           Data.IORef               (IORef, newIORef, readIORef,
-                                           writeIORef)
 import           Data.Maybe               (fromMaybe)
-import qualified Data.Map.Strict          as Map
 import qualified Data.Text                as T
-import qualified Data.Text.Encoding       as TE
 import qualified Data.Text.IO             as TIO
 import           Network.HTTP.Client      (Manager, newManager)
 import           Network.HTTP.Client.TLS  (tlsManagerSettings)
@@ -41,25 +37,20 @@ import           ATProto.Identity         (defaultHandleResolverOpts,
 import           ATProto.OAuth            (AuthorizeParams (..),
                                            AuthorizeResult (..),
                                            CallbackParams (..),
-                                           DpopClaims (..), DpopKey,
                                            Session (..),
-                                           TokenSet (..), accessTokenHash,
+                                           TokenSet (..),
                                            authorize, callback,
-                                           createDpopProof,
                                            defaultClientMetadata,
                                            newInMemorySessionStore,
                                            newInMemoryStateStore,
-                                           newOAuthClient)
+                                           newOAuthClient,
+                                           newOAuthXrpcClient)
 import           ATProto.OAuth.Client     (DidDocumentLike (..),
-                                           OAuthClientConfig (..))
+                                           OAuthClientConfig (..),
+                                           OAuthClient)
 import           ATProto.OAuth.Types      (OAuthClientMetadata (..))
 import           ATProto.Repo             (GetProfileParams (..),
                                            ProfileView (..), getProfile)
-import           ATProto.XRPC             (XrpcClient (..), XrpcError (..),
-                                           XrpcMethod (..), XrpcRequest (..),
-                                           XrpcResponse (..))
-import           ATProto.XRPC.Http        (HttpXrpcClient,
-                                           newHttpXrpcClientWith)
 
 -- ---------------------------------------------------------------------------
 -- Main
@@ -154,7 +145,7 @@ run handle = do
           TIO.putStrLn ""
 
           -- Make an authenticated getProfile call.
-          fetchAndPrintProfile mgr session
+          fetchAndPrintProfile mgr oauthClient session
 
 -- ---------------------------------------------------------------------------
 -- Authenticated resource request
@@ -162,15 +153,12 @@ run handle = do
 
 -- | Fetch and display the authenticated user's profile.
 --
--- Constructs a DPoP-protected XRPC request using the session's ephemeral
--- key and access token.  Handles @use_dpop_nonce@ retries automatically.
-fetchAndPrintProfile :: Manager -> Session -> IO ()
-fetchAndPrintProfile mgr session = do
-  let ts     = sessTokenSet session
-      pdsUrl = tsAud ts
-      did    = tsSub ts
-
-  authedClient <- newDpopXrpcClient mgr pdsUrl (sessDpopKey session) (tsAccessToken ts)
+-- Uses 'newOAuthXrpcClient' for transparent DPoP proof generation, nonce
+-- caching, and token refresh.
+fetchAndPrintProfile :: Manager -> OAuthClient -> Session -> IO ()
+fetchAndPrintProfile mgr oauthClient session = do
+  let did = tsSub (sessTokenSet session)
+  authedClient <- newOAuthXrpcClient mgr oauthClient did session
   eProfile     <- getProfile authedClient (GetProfileParams did)
   case eProfile of
     Left err   -> putStrLn $ "getProfile error: " ++ show err
@@ -183,85 +171,6 @@ fetchAndPrintProfile mgr session = do
       TIO.putStrLn $ "  Posts:        " <> maybe "?" (T.pack . show) (pvPostsCount prof)
       TIO.putStrLn $ "  Followers:    " <> maybe "?" (T.pack . show) (pvFollowersCount prof)
       TIO.putStrLn $ "  Following:    " <> maybe "?" (T.pack . show) (pvFollowsCount prof)
-
--- | A wrapper around 'HttpXrpcClient' that attaches DPoP proofs and
--- Authorization headers to every request, and retries once on
--- @use_dpop_nonce@ errors.
-data DpopXrpcClient = DpopXrpcClient
-  { dxcInner       :: HttpXrpcClient
-  , dxcPdsUrl      :: T.Text
-  , dxcDpopKey     :: DpopKey
-  , dxcAccessToken :: T.Text
-  , dxcNonceRef    :: IORef (Maybe T.Text)
-    -- ^ Cached DPoP nonce for this PDS, updated from response headers.
-  }
-
--- | Create a new 'DpopXrpcClient'.
-newDpopXrpcClient :: Manager -> T.Text -> DpopKey -> T.Text -> IO DpopXrpcClient
-newDpopXrpcClient mgr pdsUrl dpopKey accessToken = do
-  nonceRef <- newIORef Nothing
-  return DpopXrpcClient
-    { dxcInner       = newHttpXrpcClientWith mgr pdsUrl
-    , dxcPdsUrl      = pdsUrl
-    , dxcDpopKey     = dpopKey
-    , dxcAccessToken = accessToken
-    , dxcNonceRef    = nonceRef
-    }
-
-instance XrpcClient DpopXrpcClient where
-  runXrpc client req = do
-    result <- runDpopXrpc client req
-    case result of
-      Right resp -> return (Right resp)
-      Left err
-        | xrpcErrError err == "use_dpop_nonce" -> do
-            -- Extract the nonce from the error response and retry once.
-            let mNonce = Map.lookup "dpop-nonce" (xrpcErrHeaders err)
-            case mNonce of
-              Nothing    -> return (Left err)
-              Just nonce -> do
-                writeIORef (dxcNonceRef client) (Just nonce)
-                runDpopXrpc client req
-        | otherwise -> return (Left err)
-
--- | Execute one DPoP-protected XRPC request (no retry).
-runDpopXrpc :: DpopXrpcClient -> XrpcRequest -> IO (Either XrpcError XrpcResponse)
-runDpopXrpc client req = do
-  cachedNonce <- readIORef (dxcNonceRef client)
-  let httpMethod = case xrpcReqMethod req of
-                     XrpcQuery     -> "GET"
-                     XrpcProcedure -> "POST"
-      resourceUrl = dxcPdsUrl client <> "/xrpc/" <> xrpcReqNsid req
-      ath = TE.decodeUtf8Lenient (accessTokenHash (dxcAccessToken client))
-  eProof <- createDpopProof (dxcDpopKey client) DpopClaims
-    { dcHtm   = httpMethod
-    , dcHtu   = resourceUrl
-    , dcNonce = cachedNonce
-    , dcAth   = Just ath
-    }
-  case eProof of
-    Left err -> return $ Left XrpcError
-      { xrpcErrError   = "DpopProofError"
-      , xrpcErrMessage = Just (T.pack err)
-      , xrpcErrStatus  = 0
-      , xrpcErrHeaders = Map.empty
-      }
-    Right proof -> do
-      let hdrs = Map.union
-                   (Map.fromList
-                     [ ("DPoP",          proof)
-                     , ("Authorization", "DPoP " <> dxcAccessToken client)
-                     ])
-                   (xrpcReqHeaders req)
-      result <- runXrpc (dxcInner client) req { xrpcReqHeaders = hdrs }
-      -- Update the nonce cache from the response headers (success or error).
-      let respHeaders = case result of
-                          Right resp -> xrpcRespHeaders resp
-                          Left  err  -> xrpcErrHeaders err
-      case Map.lookup "DPoP-Nonce" respHeaders of
-        Just nonce -> writeIORef (dxcNonceRef client) (Just nonce)
-        Nothing    -> return ()
-      return result
 
 -- ---------------------------------------------------------------------------
 -- Callback server
