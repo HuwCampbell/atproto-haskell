@@ -102,17 +102,17 @@ repoRecordCodec :: Codec RepoRecord
 repoRecordCodec =
     Codec.record "com.atproto.repo.listRecords#repoRecord" $
         RepoRecord
-            <$> Codec.requiredField "uri"   Codec.atUri     (.rrUri)
-            <*> Codec.requiredField "cid"   Codec.text      (.rrCid)
-            <*> Codec.requiredField "value" Codec.lexValue  (.rrValue)
+            <$> Codec.requiredField "uri"   Codec.atUri     rrUri
+            <*> Codec.requiredField "cid"   Codec.text      rrCid
+            <*> Codec.requiredField "value" Codec.lexValue  rrValue
 
 -- | Codec for the @listRecords@ response body.
 listRecordsResponseCodec :: Codec ListRecordsResponse
 listRecordsResponseCodec =
     Codec.record "com.atproto.repo.listRecords#response" $
         ListRecordsResponse
-            <$> Codec.optionalField "cursor"  Codec.text                          (.lrrCursor)
-            <*> Codec.requiredField "records" (Codec.array repoRecordCodec)       (.lrrRecords)
+            <$> Codec.optionalField "cursor"  Codec.text                          lrrCursor
+            <*> Codec.requiredField "records" (Codec.array repoRecordCodec)       lrrRecords
 
 -- ---------------------------------------------------------------------------
 -- Client function

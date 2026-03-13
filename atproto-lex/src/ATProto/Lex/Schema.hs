@@ -15,8 +15,9 @@ module ATProto.Lex.Schema
   , renderSchema
   ) where
 
-import qualified Data.Aeson as Aeson
-import qualified Data.Text  as T
+import qualified Data.Aeson     as Aeson
+import qualified Data.Aeson.Key as Key
+import qualified Data.Text      as T
 
 -- | String format constraints for 'LexSchemaString'.
 data LexFormat
@@ -106,7 +107,7 @@ renderSchema (LexSchemaObject fs) =
         [ "type"       Aeson..= ("object" :: T.Text)
         , "required"   Aeson..= [fieldName f | f <- fs, fieldRequired f]
         , "properties" Aeson..= Aeson.object
-            [ (fieldName f Aeson..= renderSchema (fieldSchema f))
+            [ (Key.fromText (fieldName f) Aeson..= renderSchema (fieldSchema f))
             | f <- fs
             ]
         ]

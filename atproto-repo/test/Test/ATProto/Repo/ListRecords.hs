@@ -45,9 +45,11 @@ prop_parseSampleResponse = withTests 1 . property $ do
   resp <- evalEither (decode listRecordsResponseCodec sampleResponse)
   lrrCursor  resp === Just "3k7bj3abc"
   length (lrrRecords resp) === 2
-  let r0 = head (lrrRecords resp)
-  rrUri r0 === "at://did:plc:abc/app.bsky.feed.post/3k7aa"
-  rrCid r0 === "bafyreiapple"
+  case lrrRecords resp of
+    (r0 : _) -> do
+      rrUri r0 === "at://did:plc:abc/app.bsky.feed.post/3k7aa"
+      rrCid r0 === "bafyreiapple"
+    [] -> failure
 
 -- | An empty records list parses with no cursor.
 prop_parseEmptyResponse :: Property
@@ -87,7 +89,7 @@ prop_toQueryParamsContainsRequired = property $ do
     toQueryParams' p =
       [ ("repo",       lrpRepo p)
       , ("collection", lrpCollection p)
-      ]
+      ] :: [(T.Text, T.Text)]
 
 -- ---------------------------------------------------------------------------
 -- Group

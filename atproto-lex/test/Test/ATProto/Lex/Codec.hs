@@ -36,8 +36,8 @@ strongRefCodec :: Codec.Codec StrongRef
 strongRefCodec =
     Codec.record "com.atproto.repo.strongRef" $
         StrongRef
-            <$> Codec.requiredField "uri" Codec.atUri (.srUri)
-            <*> Codec.requiredField "cid" Codec.text  (.srCid)
+            <$> Codec.requiredField "uri" Codec.atUri srUri
+            <*> Codec.requiredField "cid" Codec.text  srCid
 
 -- ---------------------------------------------------------------------------
 -- Example union type
@@ -143,8 +143,8 @@ withOptCodec :: Codec.Codec WithOpt
 withOptCodec =
     Codec.record "example.withOpt" $
         WithOpt
-            <$> Codec.requiredField "req" Codec.text (.woRequired)
-            <*> Codec.optionalField "opt" Codec.text (.woOptional)
+            <$> Codec.requiredField "req" Codec.text woRequired
+            <*> Codec.optionalField "opt" Codec.text woOptional
 
 prop_optionalFieldPresent :: Property
 prop_optionalFieldPresent = withTests 1 . property $ do

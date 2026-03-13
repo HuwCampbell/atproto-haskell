@@ -14,8 +14,6 @@ module ATProto.Lex.Json
   , decode
   ) where
 
-import           Prelude              hiding (toJSON)
-
 import qualified Data.Aeson           as Aeson
 import qualified Data.ByteString.Lazy as BL
 import qualified Data.Text            as T

@@ -15,8 +15,8 @@
 -- strongRefCodec =
 --     Codec.record \"com.atproto.repo.strongRef\" $
 --         StrongRef
---             \<$\> Codec.requiredField \"uri\" Codec.atUri (.srUri)
---             \<*\> Codec.requiredField \"cid\" Codec.text  (.srCid)
+--             \<$\> Codec.requiredField \"uri\" Codec.atUri srUri
+--             \<*\> Codec.requiredField \"cid\" Codec.text  srCid
 -- @
 module ATProto.Lex
   ( -- * Re-exports

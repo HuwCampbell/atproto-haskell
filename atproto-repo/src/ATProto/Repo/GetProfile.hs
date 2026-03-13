@@ -74,14 +74,14 @@ profileViewCodec :: Codec ProfileView
 profileViewCodec =
     Codec.record "app.bsky.actor.defs#profileViewDetailed" $
         ProfileView
-            <$> Codec.requiredField "did"            Codec.did    (.pvDid)
-            <*> Codec.requiredField "handle"         Codec.handle (.pvHandle)
-            <*> Codec.optionalField "displayName"    Codec.text   (.pvDisplayName)
-            <*> Codec.optionalField "description"    Codec.text   (.pvDescription)
-            <*> Codec.optionalField "avatar"         Codec.uri    (.pvAvatar)
-            <*> Codec.optionalField "followersCount" Codec.int    (.pvFollowersCount)
-            <*> Codec.optionalField "followsCount"   Codec.int    (.pvFollowsCount)
-            <*> Codec.optionalField "postsCount"     Codec.int    (.pvPostsCount)
+            <$> Codec.requiredField "did"            Codec.did    pvDid
+            <*> Codec.requiredField "handle"         Codec.handle pvHandle
+            <*> Codec.optionalField "displayName"    Codec.text   pvDisplayName
+            <*> Codec.optionalField "description"    Codec.text   pvDescription
+            <*> Codec.optionalField "avatar"         Codec.uri    pvAvatar
+            <*> Codec.optionalField "followersCount" Codec.int    pvFollowersCount
+            <*> Codec.optionalField "followsCount"   Codec.int    pvFollowsCount
+            <*> Codec.optionalField "postsCount"     Codec.int    pvPostsCount
 
 -- ---------------------------------------------------------------------------
 -- Client function

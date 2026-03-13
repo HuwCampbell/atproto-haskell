@@ -19,8 +19,7 @@ import qualified Codec.CBOR.Term      as CBOR
 import qualified Data.ByteString.Lazy as BL
 import qualified Data.Text            as T
 
-import ATProto.Ipld.Cbor (decodeLexCbor, encodeLexCbor,
-                           lexValueToTerm, termToLexValue)
+import ATProto.Ipld.Cbor (encodeLexCbor, lexValueToTerm, termToLexValue)
 import ATProto.Lex.Codec (Codec (..), LexError (..))
 
 -- | Encode a value as a CBOR 'CBOR.Term'.
