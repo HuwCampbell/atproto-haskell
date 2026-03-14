@@ -18,5 +18,6 @@ packages:
   atproto-xrpc/
   examples/oauth-cli/
   examples/statusphere-og/
+  examples/statusphere-spa/
 
 with-compiler: ghc-9.12.2
