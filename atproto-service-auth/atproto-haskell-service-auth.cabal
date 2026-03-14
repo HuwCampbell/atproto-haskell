@@ -1,0 +1,57 @@
+cabal-version:      3.0
+name:               atproto-haskell-service-auth
+version:            0.1.0.0
+synopsis:           AT Protocol inter-service authentication JWTs
+description:
+  Create and verify AT Protocol inter-service authentication JWTs.
+  Tokens are compact JWS (ES256 / ES256K) with issuer, audience, and
+  optional lexicon-method claims, suitable for service-to-service
+  authorization in the AT Protocol network.
+license:            MIT
+license-file:       LICENSE
+author:             Huw Campbell
+maintainer:         huw.campbell@gmail.com
+category:           Network, Cryptography
+build-type:         Simple
+extra-doc-files:    CHANGELOG.md
+
+common warnings
+  ghc-options: -Wall
+  default-extensions: OverloadedStrings
+
+library
+  import:           warnings
+  exposed-modules:
+      ATProto.ServiceAuth
+      ATProto.ServiceAuth.Create
+      ATProto.ServiceAuth.Verify
+  build-depends:
+      base                   >= 4.14 && < 5
+    , aeson                  >= 2.0  && < 2.3
+    , base64-bytestring      >= 1.0  && < 1.3
+    , bytestring             >= 0.10 && < 0.13
+    , containers             >= 0.6  && < 0.8
+    , crypton                >= 0.32 && < 1.2
+    , text                   >= 1.2  && < 2.2
+    , time                   >= 1.9  && < 1.15
+    , atproto-haskell-crypto
+    , atproto-haskell-did
+  hs-source-dirs:   src
+  default-language: Haskell2010
+
+test-suite atproto-service-auth-tests
+  import:           warnings
+  type:             exitcode-stdio-1.0
+  main-is:          Main.hs
+  other-modules:
+      Test.ATProto.ServiceAuth.Roundtrip
+  build-depends:
+      base                          >= 4.14 && < 5
+    , bytestring                    >= 0.10 && < 0.13
+    , text                          >= 1.2  && < 2.2
+    , time                          >= 1.9  && < 1.15
+    , atproto-haskell-crypto
+    , atproto-haskell-service-auth
+    , hedgehog                      >= 1.4  && < 1.8
+  hs-source-dirs:   test
+  default-language: Haskell2010

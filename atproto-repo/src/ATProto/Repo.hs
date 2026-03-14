@@ -48,6 +48,10 @@ module ATProto.Repo
   , defaultListRecordsParams
   , ListRecordsResponse (..)
   , RepoRecord (..)
+    -- * @com.atproto.repo.putRecord@
+  , putRecord
+  , PutRecordRequest (..)
+  , PutRecordResponse (..)
     -- * @app.bsky.actor.getProfile@
   , getProfile
   , GetProfileParams (..)
@@ -56,3 +60,4 @@ module ATProto.Repo
 
 import ATProto.Repo.GetProfile
 import ATProto.Repo.ListRecords
+import ATProto.Repo.PutRecord

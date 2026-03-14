@@ -1,0 +1,59 @@
+cabal-version:      3.0
+name:               statusphere-og-example
+version:            0.1.0.0
+synopsis:           Statusphere example app – server-rendered, firehose ingestion, OAuth
+description:
+  A Haskell port of the Bluesky "Statusphere" example application
+  (statusphere-og branch).
+
+  Demonstrates:
+
+    * OAuth 2.1 sign-in via @atproto-haskell-oauth@
+    * Writing records to the user's PDS via @com.atproto.repo.putRecord@
+    * Consuming the AT Protocol firehose to ingest @xyz.statusphere.status@ records
+    * SQLite persistence with @sqlite-simple@
+    * Server-rendered HTML with @lucid@
+
+  See <https://github.com/bluesky-social/statusphere-example-app/tree/statusphere-og>
+  for the reference TypeScript implementation.
+license:            MIT
+author:             Huw Campbell
+maintainer:         huw.campbell@gmail.com
+category:           Network
+build-type:         Simple
+
+executable statusphere-og
+  main-is:          Main.hs
+  other-modules:
+      Statusphere.Auth
+      Statusphere.Database
+      Statusphere.Ingester
+      Statusphere.Views
+      Statusphere.Types
+  build-depends:
+      base                      >= 4.14 && < 5
+    , aeson                     >= 2.0  && < 2.3
+    , bytestring                >= 0.10 && < 0.13
+    , containers                >= 0.6  && < 0.9
+    , directory                 >= 1.3  && < 1.4
+    , http-types                >= 0.12 && < 0.13
+    , lucid                     >= 2.11 && < 2.12
+    , text                      >= 1.2  && < 2.2
+    , time                      >= 1.9  && < 1.15
+    , sqlite-simple             >= 0.4  && < 0.5
+    , wai                       >= 3.2  && < 3.3
+    , warp                      >= 3.3  && < 3.5
+    , http-client               >= 0.7  && < 0.8
+    , http-client-tls           >= 0.3  && < 0.5
+    , atproto-haskell-car
+    , atproto-haskell-did
+    , atproto-haskell-identity
+    , atproto-haskell-lex
+    , atproto-haskell-oauth
+    , atproto-haskell-repo
+    , atproto-haskell-firehose
+    , atproto-haskell-xrpc
+  hs-source-dirs:   .
+  default-extensions: OverloadedStrings
+  default-language:   Haskell2010
+  ghc-options:        -Wall -threaded
