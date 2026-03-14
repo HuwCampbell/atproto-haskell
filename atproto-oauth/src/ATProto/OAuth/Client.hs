@@ -387,17 +387,17 @@ callback client cp = do
       let issOk = case cpIss cp of
                     Nothing   -> True
                     Just iss' -> iss' == sdIss sd
-      if not issOk
-        then return (Left OAuthStateMismatch)
-        else do
-          storeDelState (ocStateStore client) (cpState cp)
-          eSession <- exchangeCode client sd (cpCode cp)
-          case eSession of
-            Left err      -> return (Left err)
-            Right session -> do
-              sessStorePut (ocSessionStore client)
-                           (tsSub (sessTokenSet session)) session
-              return (Right session)
+      if not issOk then
+        return (Left OAuthStateMismatch)
+      else do
+        storeDelState (ocStateStore client) (cpState cp)
+        eSession <- exchangeCode client sd (cpCode cp)
+        case eSession of
+          Left err      -> return (Left err)
+          Right session -> do
+            sessStorePut (ocSessionStore client)
+                          (tsSub (sessTokenSet session)) session
+            return (Right session)
 
 -- | Exchange an authorization code for a 'Session'.
 exchangeCode
@@ -508,15 +508,16 @@ refreshSession client did session = runEitherT $ do
   now   <- lift getCurrentTime
   newTs <- hoistEither (parseTokenResponse now iss body)
 
-  -- The issuer is verified on first login, so we don't need to verify it again.
-  -- However, the parsed token has no audience, so use the initial ones.
-  let newSession = session { sessTokenSet = newTs { tsAud = tsAud ts } }
+  -- This is overly cautious as we verified the issuer on the initial login,
+  -- but it's plausible the PDS has migrated to a new auth server.
+  aud   <- newEitherT $ verifyIssuer client ts
+  let newSession = session { sessTokenSet = newTs { tsAud = aud } }
   lift $ sessStorePut (ocSessionStore client) did newSession
   return newTs
 
 -- | Remove a session from the session store.
 deleteSession :: OAuthClient -> T.Text -> IO ()
-deleteSession client did = sessStoreDel (ocSessionStore client) did
+deleteSession = sessStoreDel . ocSessionStore
 
 -- ---------------------------------------------------------------------------
 -- HTTP helpers

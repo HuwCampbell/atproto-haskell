@@ -58,7 +58,10 @@ data PrivKey = PrivKey
   { privKeyCurve :: Curve
   , privKeyBytes :: BS.ByteString
     -- ^ Raw 32-byte scalar in @[1, n)@ for the curve.
-  } deriving (Eq, Show)
+  } deriving (Eq)
+
+instance Show PrivKey where
+  show _ = "PrivKey {}"
 
 -- | An opaque public key (33-byte compressed point encoding).
 --

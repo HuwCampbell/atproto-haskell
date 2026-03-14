@@ -131,7 +131,8 @@ curveOrder = ECC.ecc_n . ECC.common_curve . toCryptonCurve
 --
 -- The prefix byte is @0x02@ for even y and @0x03@ for odd y.
 compressPoint :: ECC.Point -> BS.ByteString
-compressPoint ECC.PointO      = BS.empty   -- should never occur for valid keys
+-- should never occur for valid keys
+compressPoint ECC.PointO      = error "compressPoint: point at infinity"
 compressPoint (ECC.Point x y) =
   let prefix = if even y then 0x02 else 0x03
   in BS.cons prefix (integerToBS32 x)
