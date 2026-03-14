@@ -1,22 +1,22 @@
 packages:
-  atproto-syntax/
+  atproto-car/
+  atproto-crypto/
   atproto-did/
+  atproto-firehose/
   atproto-identity/
   atproto-ipld/
   atproto-lex/
   atproto-lexicon/
-  atproto-crypto/
-  atproto-xrpc/
-  atproto-xrpc-http/
-  atproto-repo/
-  atproto-oauth/
-  examples/oauth-cli/
-  atproto-car/
   atproto-mst/
+  atproto-oauth/
   atproto-repo-verify/
-  atproto-firehose/
+  atproto-repo/
   atproto-service-auth/
+  atproto-syntax/
   atproto-tap/
+  atproto-xrpc-http/
+  atproto-xrpc/
+  examples/oauth-cli/
   examples/statusphere-og/
 
 with-compiler: ghc-9.12.2

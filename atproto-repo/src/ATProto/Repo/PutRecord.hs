@@ -12,16 +12,17 @@ module ATProto.Repo.PutRecord
     -- * Response
   , PutRecordResponse (..)
     -- * Codec
+  , putRecordRequestCodec
   , putRecordResponseCodec
     -- * Client function
   , putRecord
   ) where
 
-import qualified Data.Aeson              as Aeson
 import qualified Data.ByteString.Lazy    as BL
 import qualified Data.Map.Strict         as Map
 import qualified Data.Text               as T
 
+import           ATProto.Ipld.Value      (LexValue)
 import           ATProto.Lex.Codec       (Codec)
 import qualified ATProto.Lex.Codec       as Codec
 import qualified ATProto.Lex.Json        as LexJson
@@ -40,21 +41,23 @@ data PutRecordRequest = PutRecordRequest
     -- ^ NSID of the collection, e.g. @\"xyz.statusphere.status\"@.
   , prrRkey       :: T.Text
     -- ^ Record key (e.g. a TID).
-  , prrRecord     :: Aeson.Value
+  , prrRecord     :: LexValue
     -- ^ The record value to write (including @$type@).
   , prrValidate   :: Maybe Bool
     -- ^ Whether to validate the record against the Lexicon.
   } deriving (Eq, Show)
 
--- | Serialise a 'PutRecordRequest' to a JSON body.
-encodeRequest :: PutRecordRequest -> BL.ByteString
-encodeRequest r = Aeson.encode $ Aeson.object $
-  [ "repo"       Aeson..= prrRepo r
-  , "collection" Aeson..= prrCollection r
-  , "rkey"       Aeson..= prrRkey r
-  , "record"     Aeson..= prrRecord r
-  ] ++
-  maybe [] (\v -> ["validate" Aeson..= v]) (prrValidate r)
+
+putRecordRequestCodec :: Codec PutRecordRequest
+putRecordRequestCodec =
+    Codec.record "com.atproto.repo.putRecord" $
+        PutRecordRequest
+            <$> Codec.requiredField "repo"       Codec.atUri     prrRepo
+            <*> Codec.requiredField "collection" Codec.text      prrCollection
+            <*> Codec.requiredField "rkey"       Codec.text      prrRkey
+            <*> Codec.requiredField "record"     Codec.lexValue  prrRecord
+            <*> Codec.optionalField "validate"   Codec.bool      prrValidate
+
 
 -- ---------------------------------------------------------------------------
 -- Response
@@ -93,8 +96,8 @@ putRecord client req = do
     { xrpcReqMethod  = XrpcProcedure
     , xrpcReqNsid    = "com.atproto.repo.putRecord"
     , xrpcReqParams  = Map.empty
-    , xrpcReqBody    = Just (encodeRequest req)
-    , xrpcReqHeaders = Map.empty
+    , xrpcReqBody    = Just (LexJson.encode putRecordRequestCodec req)
+    , xrpcReqHeaders = Map.singleton "Content-Type" "application/json"
     }
   case result of
     Left  err  -> return (Left err)

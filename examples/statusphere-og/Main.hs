@@ -21,7 +21,6 @@ module Main (main) where
 
 import           Control.Concurrent       (forkIO)
 import           Control.Exception        (SomeException, catch)
-import qualified Data.Aeson               as Aeson
 import qualified Data.ByteString          as BS
 import qualified Data.ByteString.Lazy     as BL
 import           Data.IORef               (IORef, newIORef, readIORef, modifyIORef')
@@ -60,10 +59,13 @@ import           ATProto.Repo             (PutRecordRequest (..),
                                            PutRecordResponse (..),
                                            putRecord)
 
+import qualified ATProto.Lex.Codec        as Codec
+
 import           Statusphere.Auth         (createOAuthClient)
 import           Statusphere.Database
 import           Statusphere.Ingester     (runIngester)
 import           Statusphere.Views
+import           Statusphere.Types        (StatusView (..), statusViewCodec)
 
 -- ---------------------------------------------------------------------------
 -- Application state
@@ -273,17 +275,13 @@ handleSetStatus conn mgr oauthClient sessions req respond = do
               -- Generate a TID-like rkey
               rkey <- generateRkey
               now  <- isoNow
-              let record = Aeson.object
-                    [ "$type"     Aeson..= ("xyz.statusphere.status" :: T.Text)
-                    , "status"    Aeson..= statusEmoji
-                    , "createdAt" Aeson..= now
-                    ]
+              let record = StatusView statusEmoji now
               -- Write to PDS
               eResult <- putRecord xrpcClient PutRecordRequest
                 { prrRepo       = did
                 , prrCollection = "xyz.statusphere.status"
                 , prrRkey       = rkey
-                , prrRecord     = record
+                , prrRecord     = Codec.writer statusViewCodec record
                 , prrValidate   = Just False
                 }
               case eResult of
