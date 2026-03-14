@@ -21,6 +21,7 @@ common warnings
 library
   import:           warnings
   exposed-modules:
+      ATProto.Bsky.Feed.Post
       ATProto.Repo
       ATProto.Repo.GetProfile
       ATProto.Repo.ListRecords
@@ -43,6 +44,7 @@ test-suite atproto-repo-tests
   type:             exitcode-stdio-1.0
   main-is:          Main.hs
   other-modules:
+      Test.ATProto.Bsky.Feed.Post
       Test.ATProto.Repo.GetProfile
       Test.ATProto.Repo.ListRecords
   build-depends:
