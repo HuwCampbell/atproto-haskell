@@ -118,7 +118,7 @@ parseIdentityEvent o = do
   Aeson.withObject "IdentityPayload" (\i -> do
     did'     <- i Aeson..: "did"
     handle   <- i Aeson..: "handle"
-    isActive <- i Aeson..: "isActive"
+    isActive <- i Aeson..: "is_active"
     status   <- i Aeson..: "status"
     pure IdentityEvent
       { ieDid      = did'
