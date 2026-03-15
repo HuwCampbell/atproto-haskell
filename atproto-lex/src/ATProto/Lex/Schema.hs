@@ -95,8 +95,8 @@ renderSchema LexSchemaNull       = Aeson.object ["type" Aeson..= ("null"    :: T
 renderSchema LexSchemaBool       = Aeson.object ["type" Aeson..= ("boolean" :: T.Text)]
 renderSchema LexSchemaInt        = Aeson.object ["type" Aeson..= ("integer" :: T.Text)]
 renderSchema (LexSchemaString f) =
-    Aeson.object $ ["type" Aeson..= ("string" :: T.Text)]
-                ++ maybe [] (\fmt -> ["format" Aeson..= renderFormat fmt]) f
+    Aeson.object $ ("type" Aeson..= ("string" :: T.Text))
+                 : maybe [] (\fmt -> ["format" Aeson..= renderFormat fmt]) f
 renderSchema LexSchemaBytes      = Aeson.object ["type" Aeson..= ("bytes"   :: T.Text)]
 renderSchema LexSchemaCid        = Aeson.object ["type" Aeson..= ("cid-link" :: T.Text)]
 renderSchema LexSchemaBlob       = Aeson.object ["type" Aeson..= ("blob"     :: T.Text)]
@@ -110,7 +110,7 @@ renderSchema (LexSchemaObject fs) =
         [ "type"       Aeson..= ("object" :: T.Text)
         , "required"   Aeson..= [fieldName f | f <- fs, fieldRequired f]
         , "properties" Aeson..= Aeson.object
-            [ (Key.fromText (fieldName f) Aeson..= renderSchema (fieldSchema f))
+            [ Key.fromText (fieldName f) Aeson..= renderSchema (fieldSchema f)
             | f <- fs
             ]
         ]

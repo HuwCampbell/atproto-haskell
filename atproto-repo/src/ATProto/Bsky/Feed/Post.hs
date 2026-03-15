@@ -1,3 +1,4 @@
+{-# LANGUAGE LambdaCase #-}
 -- | Typed codec for @app.bsky.feed.post@ and all its sub-types.
 --
 -- This module provides Haskell data types and 'Codec' values for the
@@ -95,7 +96,7 @@ module ATProto.Bsky.Feed.Post
 import qualified Data.Text           as T
 import           Data.Int            (Int64)
 
-import           ATProto.Ipld.Value  (LexValue)
+import           ATProto.Ipld.Value  (BlobRef)
 import           ATProto.Lex.Codec   (Codec)
 import qualified ATProto.Lex.Codec   as Codec
 import           ATProto.Lex.Schema  (LexFormat (..))
@@ -190,9 +191,8 @@ data AspectRatio = AspectRatio
 --
 -- Defined in @app.bsky.embed.images#image@.
 data EmbedImage = EmbedImage
-  { eiImage       :: LexValue
+  { eiImage       :: BlobRef
     -- ^ The image blob.
-    -- TODO: replace with a richer blob codec once one is available.
   , eiAlt         :: T.Text
     -- ^ Alt text for accessibility.
   , eiAspectRatio :: Maybe AspectRatio
@@ -213,18 +213,16 @@ data EmbedImages = EmbedImages
 data VideoCaption = VideoCaption
   { vcLang :: T.Text
     -- ^ BCP-47 language tag.
-  , vcFile :: LexValue
+  , vcFile :: BlobRef
     -- ^ The caption blob.
-    -- TODO: replace with a richer blob codec once one is available.
   } deriving (Eq, Show)
 
 -- | An embed containing a video.
 --
 -- Defined in @app.bsky.embed.video@.
 data EmbedVideo = EmbedVideo
-  { evVideo       :: LexValue
+  { evVideo       :: BlobRef
     -- ^ The video blob.
-    -- TODO: replace with a richer blob codec once one is available.
   , evCaptions    :: Maybe [VideoCaption]
     -- ^ Optional list of caption files.
   , evAlt         :: Maybe T.Text
@@ -243,9 +241,8 @@ data ExternalEmbed = ExternalEmbed
     -- ^ Link card title.
   , eeDescription :: T.Text
     -- ^ Link card description.
-  , eeThumb       :: Maybe LexValue
+  , eeThumb       :: Maybe BlobRef
     -- ^ Optional thumbnail blob.
-    -- TODO: replace with a richer blob codec once one is available.
   } deriving (Eq, Show)
 
 -- | An embed wrapping an external link card.
@@ -429,7 +426,7 @@ embedImageCodec :: Codec EmbedImage
 embedImageCodec =
     Codec.record "app.bsky.embed.images#image" $
         EmbedImage
-            <$> Codec.requiredField "image"       Codec.lexValue            eiImage
+            <$> Codec.requiredField "image"       Codec.blob                eiImage
             <*> Codec.requiredField "alt"         Codec.text                eiAlt
             <*> Codec.optionalField "aspectRatio" aspectRatioCodec          eiAspectRatio
 
@@ -446,14 +443,14 @@ videoCaptionCodec =
     Codec.record "app.bsky.embed.video#caption" $
         VideoCaption
             <$> Codec.requiredField "lang" (Codec.string LexFormatLanguage) vcLang
-            <*> Codec.requiredField "file" Codec.lexValue                   vcFile
+            <*> Codec.requiredField "file" Codec.blob                       vcFile
 
 -- | Codec for 'EmbedVideo'.
 embedVideoCodec :: Codec EmbedVideo
 embedVideoCodec =
     Codec.record "app.bsky.embed.video" $
         EmbedVideo
-            <$> Codec.requiredField "video"       Codec.lexValue                      evVideo
+            <$> Codec.requiredField "video"       Codec.blob                          evVideo
             <*> Codec.optionalField "captions"    (Codec.array videoCaptionCodec)     evCaptions
             <*> Codec.optionalField "alt"         Codec.text                          evAlt
             <*> Codec.optionalField "aspectRatio" aspectRatioCodec                    evAspectRatio
@@ -466,7 +463,7 @@ externalEmbedCodec =
             <$> Codec.requiredField "uri"         Codec.uri        eeUri
             <*> Codec.requiredField "title"       Codec.text       eeTitle
             <*> Codec.requiredField "description" Codec.text       eeDescription
-            <*> Codec.optionalField "thumb"       Codec.lexValue   eeThumb
+            <*> Codec.optionalField "thumb"       Codec.blob       eeThumb
 
 -- | Codec for 'EmbedExternal'.
 embedExternalCodec :: Codec EmbedExternal
@@ -487,15 +484,15 @@ mediaEmbedCodec :: Codec MediaEmbed
 mediaEmbedCodec = Codec.union
   [ Codec.unionVariant "app.bsky.embed.images"
         embedImagesCodec
-        (\m -> case m of { MediaEmbedImages i -> Just i; _ -> Nothing })
+        (\case { MediaEmbedImages i -> Just i; _ -> Nothing })
         MediaEmbedImages
   , Codec.unionVariant "app.bsky.embed.video"
         embedVideoCodec
-        (\m -> case m of { MediaEmbedVideo v -> Just v; _ -> Nothing })
+        (\case { MediaEmbedVideo v -> Just v; _ -> Nothing })
         MediaEmbedVideo
   , Codec.unionVariant "app.bsky.embed.external"
         embedExternalCodec
-        (\m -> case m of { MediaEmbedExternal e -> Just e; _ -> Nothing })
+        (\case { MediaEmbedExternal e -> Just e; _ -> Nothing })
         MediaEmbedExternal
   ]
 
@@ -512,23 +509,23 @@ postEmbedCodec :: Codec PostEmbed
 postEmbedCodec = Codec.union
   [ Codec.unionVariant "app.bsky.embed.images"
         embedImagesCodec
-        (\e -> case e of { PostEmbedImages i -> Just i; _ -> Nothing })
+        (\case { PostEmbedImages i -> Just i; _ -> Nothing })
         PostEmbedImages
   , Codec.unionVariant "app.bsky.embed.video"
         embedVideoCodec
-        (\e -> case e of { PostEmbedVideo v -> Just v; _ -> Nothing })
+        (\case { PostEmbedVideo v -> Just v; _ -> Nothing })
         PostEmbedVideo
   , Codec.unionVariant "app.bsky.embed.external"
         embedExternalCodec
-        (\e -> case e of { PostEmbedExternal x -> Just x; _ -> Nothing })
+        (\case { PostEmbedExternal x -> Just x; _ -> Nothing })
         PostEmbedExternal
   , Codec.unionVariant "app.bsky.embed.record"
         embedRecordCodec
-        (\e -> case e of { PostEmbedRecord r -> Just r; _ -> Nothing })
+        (\case { PostEmbedRecord r -> Just r; _ -> Nothing })
         PostEmbedRecord
   , Codec.unionVariant "app.bsky.embed.recordWithMedia"
         embedRecordWithMediaCodec
-        (\e -> case e of { PostEmbedRecordWithMedia rwm -> Just rwm; _ -> Nothing })
+        (\case { PostEmbedRecordWithMedia rwm -> Just rwm; _ -> Nothing })
         PostEmbedRecordWithMedia
   ]
 
@@ -551,7 +548,7 @@ postLabelsCodec :: Codec PostLabels
 postLabelsCodec = Codec.union
   [ Codec.unionVariant "com.atproto.label.defs#selfLabels"
         selfLabelsCodec
-        (\l -> case l of { PostLabelsSelf s -> Just s })
+        (\case { PostLabelsSelf s -> Just s })
         PostLabelsSelf
   ]
 

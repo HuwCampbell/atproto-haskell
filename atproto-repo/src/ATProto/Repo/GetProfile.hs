@@ -37,7 +37,7 @@ import           ATProto.XRPC.Types  (XrpcError (..), XrpcMethod (..), XrpcReque
 -- ---------------------------------------------------------------------------
 
 -- | Query parameters for @app.bsky.actor.getProfile@.
-data GetProfileParams = GetProfileParams
+newtype GetProfileParams = GetProfileParams
   { gppActor :: T.Text
     -- ^ The DID or handle of the account to fetch, e.g.
     -- @\"did:plc:ewvi7nxzyoun6zhhandbv25b\"@ or @\"haileyok.com\"@.

@@ -24,8 +24,8 @@ import qualified Codec.CBOR.Decoding  as D
 import qualified Codec.CBOR.Read      as R
 import qualified Data.ByteString.Lazy as BL
 
-import ATProto.Car.Cid      (CidBytes (..), parseCidFromBytes)
-import ATProto.Car.BlockMap (BlockMap)
+import           ATProto.Car.Cid      (CidBytes (..), parseCidFromBytes)
+import           ATProto.Car.BlockMap (BlockMap)
 
 -- ---------------------------------------------------------------------------
 -- Error type

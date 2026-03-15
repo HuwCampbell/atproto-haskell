@@ -46,7 +46,7 @@ data UploadBlobRequest = UploadBlobRequest
 -- ---------------------------------------------------------------------------
 
 -- | Response from @com.atproto.repo.uploadBlob@.
-data UploadBlobResponse = UploadBlobResponse
+newtype UploadBlobResponse = UploadBlobResponse
   { ubrBlob :: BlobRef
     -- ^ The blob reference returned by the server.
   } deriving (Eq, Show)
