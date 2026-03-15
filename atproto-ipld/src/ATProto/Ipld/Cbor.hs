@@ -31,8 +31,7 @@ import qualified Data.Text.Lazy       as LT
 import           Data.Int             (Int64)
 import           Data.Word            (Word64)
 
-import ATProto.Ipld.Value (Cid (..), LexValue (..))
-
+import ATProto.Ipld.Value (BlobRef (..), Cid (..), LexValue (..))
 -- | The CBOR tag number for CID links (tag 42, per the IPLD\/DAG-CBOR spec).
 cidTagNum :: Word64
 cidTagNum = 42
@@ -50,6 +49,14 @@ lexValueToTerm (LexBytes bs)       = CBOR.TBytes bs
 lexValueToTerm (LexLink (Cid c))   =
     -- Prepend the 0x00 multibase identity prefix byte to the UTF-8 CID string.
     CBOR.TTagged cidTagNum (CBOR.TBytes (BS.cons 0x00 (TE.encodeUtf8 c)))
+lexValueToTerm (LexBlob (BlobRef (Cid c) mt sz)) =
+    -- Encode as a CBOR map with keys sorted in byte order.
+    CBOR.TMapI
+        [ (CBOR.TString "$type",    CBOR.TString "blob")
+        , (CBOR.TString "mimeType", CBOR.TString mt)
+        , (CBOR.TString "ref",      CBOR.TTagged cidTagNum (CBOR.TBytes (BS.cons 0x00 (TE.encodeUtf8 c))))
+        , (CBOR.TString "size",     CBOR.TInteger (fromIntegral sz))
+        ]
 lexValueToTerm (LexArray vs)       = CBOR.TList (map lexValueToTerm vs)
 lexValueToTerm (LexObject m)       =
     -- Keys must be sorted in byte order for canonical DAG-CBOR.
@@ -102,13 +109,44 @@ termToLexValue other                  =
 
 -- | Decode a list of CBOR key-value pairs into a 'LexValue' map.
 decodePairs :: [(CBOR.Term, CBOR.Term)] -> Either String LexValue
-decodePairs pairs = do
-    kvs <- mapM decodePair pairs
-    return (LexObject (Map.fromList kvs))
+decodePairs pairs =
+    -- Check for blob reference before building a generic LexObject.
+    case lookup (CBOR.TString "$type") pairs of
+        Just (CBOR.TString "blob") -> decodeBlobRefCbor pairs
+        _ -> do
+            kvs <- mapM decodePair pairs
+            return (LexObject (Map.fromList kvs))
   where
     decodePair (CBOR.TString k, v) = fmap ((,) k) (termToLexValue v)
     decodePair (k, _)              =
         Left ("LexValue: map key must be a text string, got: " ++ show k)
+
+-- | Decode a CBOR map with @$type = \"blob\"@ into a 'LexBlob'.
+decodeBlobRefCbor :: [(CBOR.Term, CBOR.Term)] -> Either String LexValue
+decodeBlobRefCbor pairs = do
+    refTerm <- case lookup (CBOR.TString "ref") pairs of
+        Just t  -> Right t
+        Nothing -> Left "LexValue: blob missing 'ref' field"
+    cid <- case refTerm of
+        CBOR.TTagged tag (CBOR.TBytes bs) | tag == cidTagNum ->
+            case BS.uncons bs of
+                Just (0x00, rest) ->
+                    case TE.decodeUtf8' rest of
+                        Left  err -> Left ("LexValue: blob CID not valid UTF-8: " ++ show err)
+                        Right c   -> Right (Cid c)
+                _ -> Left "LexValue: blob CID tag 42 payload missing 0x00 prefix"
+        _ -> Left "LexValue: blob 'ref' must be a tag-42 CID"
+    mt <- case lookup (CBOR.TString "mimeType") pairs of
+        Just (CBOR.TString t)  -> Right t
+        Just (CBOR.TStringI t) -> Right (LT.toStrict t)
+        _ -> Left "LexValue: blob missing or invalid 'mimeType' field"
+    sz <- case lookup (CBOR.TString "size") pairs of
+        Just (CBOR.TInt n)     -> Right (fromIntegral n)
+        Just (CBOR.TInteger n)
+            | n >= fromIntegral (minBound :: Int64) && n <= fromIntegral (maxBound :: Int64)
+            -> Right (fromIntegral n)
+        _ -> Left "LexValue: blob missing or invalid 'size' field"
+    Right (LexBlob (BlobRef cid mt sz))
 
 -- | Serialise a 'LexValue' to canonical DAG-CBOR bytes.
 encodeLexCbor :: LexValue -> BL.ByteString

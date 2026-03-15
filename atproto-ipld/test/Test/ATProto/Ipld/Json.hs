@@ -4,11 +4,12 @@ module Test.ATProto.Ipld.Json (tests) where
 import qualified Data.ByteString.Char8 as BC
 import qualified Data.Map.Strict       as Map
 import qualified Data.Text             as T
+import           Data.Int              (Int64)
 import           Hedgehog
 import qualified Hedgehog.Gen          as Gen
 import qualified Hedgehog.Range        as Range
 
-import ATProto.Ipld.Value (Cid (..), LexValue (..))
+import ATProto.Ipld.Value (Cid (..), BlobRef (..), LexValue (..))
 import ATProto.Ipld.Json  (encodeLexJson, decodeLexJson,
                             lexValueToJson, jsonToLexValue)
 
@@ -18,6 +19,13 @@ import ATProto.Ipld.Json  (encodeLexJson, decodeLexJson,
 
 genCid :: Gen Cid
 genCid = Cid . T.pack <$> Gen.string (Range.linear 5 20) Gen.alphaNum
+
+genBlobRef :: Gen BlobRef
+genBlobRef =
+    BlobRef
+        <$> genCid
+        <*> Gen.text (Range.linear 3 20) Gen.alphaNum
+        <*> Gen.int64 (Range.linear 0 1000000)
 
 genLexValue :: Gen LexValue
 genLexValue = Gen.recursive Gen.choice nonRecursive recursive
@@ -29,6 +37,7 @@ genLexValue = Gen.recursive Gen.choice nonRecursive recursive
         , LexString <$> Gen.text (Range.linear 0 30) Gen.unicode
         , LexBytes  <$> Gen.bytes (Range.linear 0 20)
         , LexLink   <$> genCid
+        , LexBlob   <$> genBlobRef
         ]
     recursive =
         [ LexArray  <$> Gen.list  (Range.linear 0 5) genLexValue
@@ -94,6 +103,23 @@ prop_nestedObject = withTests 1 . property $ do
         Left  err -> annotate err >> failure
         Right v'  -> v === v'
 
+-- | BlobRef round-trips through JSON.
+prop_blobRefRoundTrip :: Property
+prop_blobRefRoundTrip = property $ do
+    b <- forAll genBlobRef
+    case decodeLexJson (encodeLexJson (LexBlob b)) of
+        Left  err -> annotate err >> failure
+        Right v'  -> LexBlob b === v'
+
+-- | BlobRef encodes to the expected JSON shape.
+prop_blobRefEncoding :: Property
+prop_blobRefEncoding = withTests 1 . property $ do
+    let b = BlobRef (Cid "bafyreiabc123") "image/jpeg" 12345
+        encoded = encodeLexJson (LexBlob b)
+    case decodeLexJson encoded of
+        Left  err -> annotate err >> failure
+        Right v'  -> LexBlob b === v'
+
 -- ---------------------------------------------------------------------------
 -- Group
 -- ---------------------------------------------------------------------------
@@ -106,4 +132,6 @@ tests = Group "Ipld.Json"
     , ("CID encoding",        prop_cidEncoding)
     , ("bytes encoding",      prop_bytesEncoding)
     , ("nested object",       prop_nestedObject)
+    , ("BlobRef round-trip",  prop_blobRefRoundTrip)
+    , ("BlobRef encoding",    prop_blobRefEncoding)
     ]
