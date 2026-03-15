@@ -84,10 +84,10 @@ prop_parseIdentityEvent = withTests 1 . property $ do
         [ "id"   Aeson..= (12346 :: Int)
         , "type" Aeson..= ("identity" :: T.Text)
         , "identity" Aeson..= Aeson.object
-            [ "did"      Aeson..= ("did:plc:abc123" :: T.Text)
-            , "handle"   Aeson..= ("alice.bsky.social" :: T.Text)
-            , "isActive" Aeson..= True
-            , "status"   Aeson..= ("active" :: T.Text)
+            [ "did"       Aeson..= ("did:plc:abc123" :: T.Text)
+            , "handle"    Aeson..= ("alice.bsky.social" :: T.Text)
+            , "is_active" Aeson..= True
+            , "status"    Aeson..= ("active" :: T.Text)
             ]
         ]
   case parseTapEvent json of
