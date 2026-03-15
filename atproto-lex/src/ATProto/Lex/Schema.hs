@@ -71,6 +71,8 @@ data LexSchema
     -- ^ A raw byte array.
   | LexSchemaCid
     -- ^ A CID link.
+  | LexSchemaBlob
+    -- ^ A blob reference (uploaded file).
   | LexSchemaArray   LexSchema
     -- ^ An ordered sequence of values sharing a common schema.
   | LexSchemaObject  [LexField]
@@ -97,6 +99,7 @@ renderSchema (LexSchemaString f) =
                 ++ maybe [] (\fmt -> ["format" Aeson..= renderFormat fmt]) f
 renderSchema LexSchemaBytes      = Aeson.object ["type" Aeson..= ("bytes"   :: T.Text)]
 renderSchema LexSchemaCid        = Aeson.object ["type" Aeson..= ("cid-link" :: T.Text)]
+renderSchema LexSchemaBlob       = Aeson.object ["type" Aeson..= ("blob"     :: T.Text)]
 renderSchema (LexSchemaArray s)  =
     Aeson.object
         [ "type"  Aeson..= ("array" :: T.Text)

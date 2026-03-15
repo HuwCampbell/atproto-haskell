@@ -6,6 +6,8 @@
 module ATProto.Ipld.Value
   ( -- * Content identifier
     Cid (..)
+    -- * Blob reference
+  , BlobRef (..)
     -- * The central IR
   , LexValue (..)
   ) where
@@ -22,6 +24,26 @@ import           Data.Int        (Int64)
 -- public API.
 newtype Cid = Cid { cidText :: T.Text }
   deriving (Eq, Ord, Show)
+
+-- | A reference to an uploaded blob.
+--
+-- Corresponds to the @blob@ $type in the AT Protocol data model:
+--
+-- @
+-- { "$type": "blob"
+-- , "ref":      { "$link": "\<cid\>" }
+-- , "mimeType": "image\/jpeg"
+-- , "size":     12345
+-- }
+-- @
+data BlobRef = BlobRef
+  { blobRefCid      :: !Cid
+    -- ^ The CID of the blob content.
+  , blobRefMimeType :: !T.Text
+    -- ^ MIME type, e.g. @\"image\/jpeg\"@.
+  , blobRefSize     :: !Int64
+    -- ^ Size of the blob in bytes.
+  } deriving (Eq, Show)
 
 -- | The AT Protocol data model value type.
 --
@@ -52,6 +74,8 @@ data LexValue
     -- ^ A raw byte array.
   | LexLink   !Cid
     -- ^ An IPLD CID link.
+  | LexBlob   !BlobRef
+    -- ^ A reference to an uploaded blob.
   | LexArray  ![LexValue]
     -- ^ An ordered sequence of values.
   | LexObject !(Map.Map T.Text LexValue)

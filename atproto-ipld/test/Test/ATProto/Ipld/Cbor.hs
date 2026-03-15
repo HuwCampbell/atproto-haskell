@@ -3,11 +3,12 @@ module Test.ATProto.Ipld.Cbor (tests) where
 
 import qualified Data.Map.Strict as Map
 import qualified Data.Text       as T
+import           Data.Int        (Int64)
 import           Hedgehog
 import qualified Hedgehog.Gen    as Gen
 import qualified Hedgehog.Range  as Range
 
-import ATProto.Ipld.Value (Cid (..), LexValue (..))
+import ATProto.Ipld.Value (Cid (..), BlobRef (..), LexValue (..))
 import ATProto.Ipld.Cbor  (encodeLexCbor, decodeLexCbor)
 
 -- ---------------------------------------------------------------------------
@@ -16,6 +17,13 @@ import ATProto.Ipld.Cbor  (encodeLexCbor, decodeLexCbor)
 
 genCid :: Gen Cid
 genCid = Cid . T.pack <$> Gen.string (Range.linear 5 20) Gen.alphaNum
+
+genBlobRef :: Gen BlobRef
+genBlobRef =
+    BlobRef
+        <$> genCid
+        <*> Gen.text (Range.linear 3 20) Gen.alphaNum
+        <*> Gen.int64 (Range.linear 0 1000000)
 
 genLexValue :: Gen LexValue
 genLexValue = Gen.recursive Gen.choice nonRecursive recursive
@@ -27,6 +35,7 @@ genLexValue = Gen.recursive Gen.choice nonRecursive recursive
         , LexString <$> Gen.text (Range.linear 0 30) Gen.unicode
         , LexBytes  <$> Gen.bytes (Range.linear 0 20)
         , LexLink   <$> genCid
+        , LexBlob   <$> genBlobRef
         ]
     recursive =
         [ LexArray  <$> Gen.list (Range.linear 0 5) genLexValue
@@ -77,14 +86,23 @@ prop_nestedObject = withTests 1 . property $ do
         Left  err -> annotate err >> failure
         Right v'  -> v === v'
 
+-- | BlobRef survives a CBOR round-trip.
+prop_blobRefRoundTrip :: Property
+prop_blobRefRoundTrip = property $ do
+    b <- forAll genBlobRef
+    case decodeLexCbor (encodeLexCbor (LexBlob b)) of
+        Left  err -> annotate err >> failure
+        Right v'  -> LexBlob b === v'
+
 -- ---------------------------------------------------------------------------
 -- Group
 -- ---------------------------------------------------------------------------
 
 tests :: Group
 tests = Group "Ipld.Cbor"
-    [ ("CBOR round-trip",   prop_cborRoundTrip)
-    , ("CID round-trip",    prop_cidRoundTrip)
-    , ("bytes round-trip",  prop_bytesRoundTrip)
-    , ("nested object",     prop_nestedObject)
+    [ ("CBOR round-trip",    prop_cborRoundTrip)
+    , ("CID round-trip",     prop_cidRoundTrip)
+    , ("bytes round-trip",   prop_bytesRoundTrip)
+    , ("nested object",      prop_nestedObject)
+    , ("BlobRef round-trip", prop_blobRefRoundTrip)
     ]

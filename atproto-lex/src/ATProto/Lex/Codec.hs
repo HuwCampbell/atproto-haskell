@@ -24,6 +24,7 @@ module ATProto.Lex.Codec
   , string
   , bytes
   , cid
+  , blob
   , datetime
   , atUri
   , did
@@ -54,7 +55,7 @@ import           Data.ByteString     (ByteString)
 import           Data.Int            (Int64)
 import           Data.Profunctor     (Profunctor (..))
 
-import ATProto.Ipld.Value (Cid, LexValue (..))
+import ATProto.Ipld.Value (BlobRef (..), Cid, LexValue (..))
 import ATProto.Lex.Schema
 
 -- ---------------------------------------------------------------------------
@@ -187,6 +188,20 @@ cid = Codec
         LexLink c -> Right c
         _         -> Left (TypeMismatch "cid-link" v)
   , writer  = LexLink
+  }
+
+-- | Codec for blob references.
+--
+-- Encodes and decodes 'BlobRef' values, which appear in the AT Protocol
+-- data model as @{\"$type\":\"blob\", \"ref\":{...}, \"mimeType\":\"...\", \"size\":...}@
+-- objects.
+blob :: Codec BlobRef
+blob = Codec
+  { schema  = LexSchemaBlob
+  , decoder = \v -> case v of
+        LexBlob b -> Right b
+        _         -> Left (TypeMismatch "blob" v)
+  , writer  = LexBlob
   }
 
 -- | Codec for @datetime@-format strings.

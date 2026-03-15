@@ -17,7 +17,7 @@ import           Hedgehog
 import qualified Hedgehog.Gen      as Gen
 import qualified Hedgehog.Range    as Range
 
-import           ATProto.Ipld.Value (LexValue (..))
+import           ATProto.Ipld.Value (LexValue (..), BlobRef (..), Cid (..))
 import qualified ATProto.Lex.Codec  as Codec
 import qualified ATProto.Lex.Json   as LexJson
 import qualified ATProto.Lex.Cbor   as LexCbor
@@ -235,6 +235,37 @@ prop_intTypeMismatch = withTests 1 . property $ do
         _                             -> failure
 
 -- ---------------------------------------------------------------------------
+-- 7. Blob codec
+-- ---------------------------------------------------------------------------
+
+genBlobRef :: Gen BlobRef
+genBlobRef =
+    BlobRef
+        <$> (Cid <$> Gen.text (Range.linear 5 20) Gen.alphaNum)
+        <*> Gen.text (Range.linear 3 20) Gen.alphaNum
+        <*> Gen.int64 (Range.linear 0 1000000)
+
+prop_jsonBlobRoundTrip :: Property
+prop_jsonBlobRoundTrip = property $ do
+    b <- forAll genBlobRef
+    roundTripJson Codec.blob b
+
+prop_cborBlobRoundTrip :: Property
+prop_cborBlobRoundTrip = property $ do
+    b <- forAll genBlobRef
+    roundTripCbor Codec.blob b
+
+prop_blobSchema :: Property
+prop_blobSchema = withTests 1 . property $
+    Codec.schema Codec.blob === LexSchemaBlob
+
+prop_blobTypeMismatch :: Property
+prop_blobTypeMismatch = withTests 1 . property $ do
+    case Codec.decoder Codec.blob (LexString "not-a-blob") of
+        Left (Codec.TypeMismatch t _) -> t === "blob"
+        _                             -> failure
+
+-- ---------------------------------------------------------------------------
 -- Helpers
 -- ---------------------------------------------------------------------------
 
@@ -287,4 +318,9 @@ tests = Group "Lex.Codec"
     , ("missing field",               prop_missingField)
     , ("type mismatch bool",          prop_typeMismatch)
     , ("type mismatch int",           prop_intTypeMismatch)
+      -- Blob codec
+    , ("JSON blob round-trip",        prop_jsonBlobRoundTrip)
+    , ("CBOR blob round-trip",        prop_cborBlobRoundTrip)
+    , ("blob schema",                 prop_blobSchema)
+    , ("blob type mismatch",          prop_blobTypeMismatch)
     ]

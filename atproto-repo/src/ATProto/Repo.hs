@@ -52,12 +52,21 @@ module ATProto.Repo
   , putRecord
   , PutRecordRequest (..)
   , PutRecordResponse (..)
+    -- * @com.atproto.repo.uploadBlob@
+  , uploadBlob
+  , UploadBlobRequest (..)
+  , UploadBlobResponse (..)
+    -- * @com.atproto.sync.getBlob@
+  , getBlob
+  , GetBlobParams (..)
     -- * @app.bsky.actor.getProfile@
   , getProfile
   , GetProfileParams (..)
   , ProfileView (..)
   ) where
 
+import ATProto.Repo.GetBlob
 import ATProto.Repo.GetProfile
 import ATProto.Repo.ListRecords
 import ATProto.Repo.PutRecord
+import ATProto.Repo.UploadBlob

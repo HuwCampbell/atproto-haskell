@@ -22,10 +22,11 @@ import qualified Data.ByteString.Base64  as B64
 import qualified Data.ByteString.Lazy    as BL
 import qualified Data.Map.Strict         as Map
 import qualified Data.Scientific         as Scientific
+import qualified Data.Text               as T
 import qualified Data.Text.Encoding      as TE
 import qualified Data.Vector             as V
 
-import ATProto.Ipld.Value (Cid (..), LexValue (..))
+import ATProto.Ipld.Value (BlobRef (..), Cid (..), LexValue (..))
 
 -- | Encode a 'LexValue' as an Aeson 'Aeson.Value' using DAG-JSON conventions.
 --
@@ -40,6 +41,13 @@ lexValueToJson (LexBytes bs)   =
     Aeson.object [ "$bytes" Aeson..= TE.decodeUtf8 (B64.encode bs) ]
 lexValueToJson (LexLink (Cid c)) =
     Aeson.object [ "$link" Aeson..= c ]
+lexValueToJson (LexBlob (BlobRef (Cid c) mt sz)) =
+    Aeson.object
+        [ "$type"    Aeson..= ("blob" :: T.Text)
+        , "ref"      Aeson..= Aeson.object [ "$link" Aeson..= c ]
+        , "mimeType" Aeson..= mt
+        , "size"     Aeson..= sz
+        ]
 lexValueToJson (LexArray vs)   =
     Aeson.Array (V.fromList (map lexValueToJson vs))
 lexValueToJson (LexObject m)   =
@@ -64,17 +72,41 @@ jsonToLexValue (Aeson.Array vs) = do
     return (LexArray vs')
 jsonToLexValue (Aeson.Object km) =
     -- Check for special singleton objects first.
-    case (KM.lookup "$link" km, KM.lookup "$bytes" km) of
-        (Just (Aeson.String c), _) | KM.size km == 1 ->
+    case (KM.lookup "$link" km, KM.lookup "$bytes" km, KM.lookup "$type" km) of
+        (Just (Aeson.String c), _, _) | KM.size km == 1 ->
             Right (LexLink (Cid c))
-        (_, Just (Aeson.String b64)) | KM.size km == 1 ->
+        (_, Just (Aeson.String b64), _) | KM.size km == 1 ->
             case B64.decode (TE.encodeUtf8 b64) of
                 Left  err -> Left ("LexValue: invalid base64 in $bytes: " ++ err)
                 Right bs  -> Right (LexBytes bs)
+        (_, _, Just (Aeson.String "blob")) ->
+            decodeBlobRefJson km
         _ -> do
             let pairs = KM.toList km
             pairs' <- mapM (\(k, v) -> fmap ((,) (Key.toText k)) (jsonToLexValue v)) pairs
             return (LexObject (Map.fromList pairs'))
+
+-- | Decode a JSON object with @$type = "blob"@ into a 'LexBlob'.
+decodeBlobRefJson :: KM.KeyMap Aeson.Value -> Either String LexValue
+decodeBlobRefJson km = do
+    refKm <- case KM.lookup "ref" km of
+        Just (Aeson.Object r) -> Right r
+        _ -> Left "LexValue: blob 'ref' must be an object"
+    cidStr <- case KM.lookup "$link" refKm of
+        Just (Aeson.String c) -> Right c
+        _ -> Left "LexValue: blob ref.$link must be a string"
+    mt <- case KM.lookup "mimeType" km of
+        Just (Aeson.String t) -> Right t
+        _ -> Left "LexValue: blob 'mimeType' must be a string"
+    sz <- case KM.lookup "size" km of
+        Just (Aeson.Number n) ->
+            if Scientific.isInteger n
+                then case Scientific.toBoundedInteger n of
+                    Nothing -> Left "LexValue: blob 'size' out of Int64 range"
+                    Just i  -> Right i
+                else Left "LexValue: blob 'size' must be an integer"
+        _ -> Left "LexValue: blob 'size' must be a number"
+    Right (LexBlob (BlobRef (Cid cidStr) mt sz))
 
 -- | Serialise a 'LexValue' to a JSON 'BL.ByteString'.
 encodeLexJson :: LexValue -> BL.ByteString
