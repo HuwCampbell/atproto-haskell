@@ -34,7 +34,7 @@ import qualified Crypto.PubKey.ECC.Types            as ECC
 import qualified Crypto.PubKey.ECC.Prim             as ECPrim
 import           Crypto.Hash.Algorithms             (SHA256 (..))
 
-import ATProto.Crypto.Types
+import           ATProto.Crypto.Types
 
 -- ---------------------------------------------------------------------------
 -- Public API

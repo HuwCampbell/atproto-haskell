@@ -22,7 +22,7 @@ didKeyPrefix = "did:key:"
 
 -- | Encode a 'PubKey' as a @did:key@ string.
 pubKeyToDidKey :: PubKey -> String
-pubKeyToDidKey = (didKeyPrefix ++) . encodeMultikey
+pubKeyToDidKey = (didKeyPrefix <>) . encodeMultikey
 
 -- | Decode a @did:key@ string into a 'PubKey'.
 --

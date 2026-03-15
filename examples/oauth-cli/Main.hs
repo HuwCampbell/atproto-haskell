@@ -30,8 +30,7 @@ import           System.Exit              (exitFailure)
 import           System.IO                (hFlush, stdout)
 
 import           ATProto.DID              (DidDocument (..), DidResolver (..),
-                                           Service (..), defaultPlcResolver,
-                                           newWebResolver)
+                                           Service (..), defaultDispatchResolver)
 import           ATProto.Identity         (defaultHandleResolverOpts,
                                            newHandleResolver, resolveHandle)
 import           ATProto.OAuth            (AuthorizeParams (..),
@@ -75,8 +74,7 @@ run handle = do
 
   -- Identity resolvers.
   handleResolver <- newHandleResolver defaultHandleResolverOpts
-  plcRes         <- defaultPlcResolver
-  webRes         <- newWebResolver
+  didResolver    <- defaultDispatchResolver
 
   -- Start a local callback server on a random available port.
   (port, callbackMVar) <- startCallbackServer
@@ -96,7 +94,7 @@ run handle = do
         { occMetadata           = clientMeta
         , occManager            = mgr
         , occResolveHandle      = resolveHandle handleResolver
-        , occResolveDid         = didResolver plcRes webRes
+        , occResolveDid         = goResolver didResolver
         , occTokenRefreshBuffer = 60
         }
 
@@ -202,23 +200,14 @@ startCallbackServer = do
 -- Identity helpers
 -- ---------------------------------------------------------------------------
 
--- | Resolve a DID to a 'DidDocumentLike' using either the PLC or Web
--- resolver depending on the DID method prefix.
-didResolver
-  :: (DidResolver plc, DidResolver web)
-  => plc -> web -> T.Text -> IO (Either String DidDocumentLike)
-didResolver plcRes webRes did
-  | "did:plc:" `T.isPrefixOf` did = go plcRes
-  | "did:web:" `T.isPrefixOf` did = go webRes
-  | otherwise = return (Left ("Unsupported DID method: " ++ T.unpack did))
+goResolver :: DidResolver r => r -> T.Text -> IO (Either String DidDocumentLike)
+goResolver resolver did = do
+  eDoc <- resolve resolver did
+  case eDoc of
+    Left err  -> return (Left (show err))
+    Right doc ->
+      case filter isPds (didDocServices doc) of
+        (s:_) -> return (Right (DidDocumentLike (serviceEndpoint s)))
+        []    -> return (Left ("No PDS service in DID document for " ++ T.unpack did))
   where
-    go resolver = do
-      eDoc <- resolve resolver did
-      case eDoc of
-        Left err  -> return (Left (show err))
-        Right doc ->
-          case filter isPds (didDocServices doc) of
-            (s:_) -> return (Right (DidDocumentLike (serviceEndpoint s)))
-            []    -> return (Left ("No PDS service in DID document for " ++ T.unpack did))
-
     isPds s = serviceType s == "AtprotoPersonalDataServer"

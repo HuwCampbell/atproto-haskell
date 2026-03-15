@@ -40,8 +40,8 @@ import           Network.HTTP.Client       (Manager, Request, httpLbs,
 import           Network.HTTP.Client.TLS   (tlsManagerSettings)
 import           Network.HTTP.Types.Status (statusCode)
 
-import ATProto.DID.Document (DidDocument (..))
-import ATProto.DID.Resolver (DidResolver (..), ResolveError (..))
+import           ATProto.DID.Document (DidDocument (..))
+import           ATProto.DID.Resolver (DidResolver (..), ResolveError (..))
 
 -- | A resolver for @did:plc@ identifiers.
 data PlcResolver = PlcResolver
@@ -80,9 +80,9 @@ resolvePlc r did = do
         Aeson.Error   msg -> return (Left (DidParseError msg))
         Aeson.Success doc ->
           if didDocId doc == did
-            then return (Right doc)
-            else return (Left (DidParseError
-                   "DID document 'id' does not match the requested DID"))
+            then return $ Right doc
+            else return $ Left (DidParseError
+                   "DID document 'id' does not match the requested DID")
 
 -- | Fetch a URL and return the JSON body, or 'Nothing' on HTTP 404.
 -- Throws on other errors.

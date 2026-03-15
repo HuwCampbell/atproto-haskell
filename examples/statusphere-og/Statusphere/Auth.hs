@@ -12,7 +12,7 @@ import           Network.HTTP.Client      (Manager)
 
 import           ATProto.DID              (DidDocument (..), DidResolver (..),
                                            Service (..),
-                                           defaultPlcResolver, newWebResolver)
+                                           defaultDispatchResolver)
 import           ATProto.Identity         (defaultHandleResolverOpts,
                                            newHandleResolver, resolveHandle)
 import           ATProto.OAuth            (newInMemorySessionStore,
@@ -28,8 +28,7 @@ import           ATProto.OAuth.Types      (OAuthClientMetadata (..),
 createOAuthClient :: Manager -> Int -> IO OAuthClient
 createOAuthClient mgr port = do
   handleResolver <- newHandleResolver defaultHandleResolverOpts
-  plcRes         <- defaultPlcResolver
-  webRes         <- newWebResolver
+  didResolver    <- defaultDispatchResolver
 
   let callbackUrl = "http://127.0.0.1:" <> T.pack (show port) <> "/oauth/callback"
       clientMeta  = (loopbackClientMetadata "atproto transition:generic" [callbackUrl])
@@ -42,27 +41,21 @@ createOAuthClient mgr port = do
         { occMetadata           = clientMeta
         , occManager            = mgr
         , occResolveHandle      = resolveHandle handleResolver
-        , occResolveDid         = didResolver plcRes webRes
+        , occResolveDid         = goResolver didResolver
         , occTokenRefreshBuffer = 60
         }
 
   newOAuthClient cfg stateStore sessionStore
 
 -- | Resolve a DID to a 'DidDocumentLike' (just the PDS URL).
-didResolver
-  :: (DidResolver plc, DidResolver web)
-  => plc -> web -> T.Text -> IO (Either String DidDocumentLike)
-didResolver plcRes webRes did
-  | "did:plc:" `T.isPrefixOf` did = go plcRes
-  | "did:web:" `T.isPrefixOf` did = go webRes
-  | otherwise = return (Left ("Unsupported DID method: " ++ T.unpack did))
+goResolver :: DidResolver r => r -> T.Text -> IO (Either String DidDocumentLike)
+goResolver resolver did = do
+  eDoc <- resolve resolver did
+  case eDoc of
+    Left err  -> return (Left (show err))
+    Right doc ->
+      case filter isPds (didDocServices doc) of
+        (s:_) -> return (Right (DidDocumentLike (serviceEndpoint s)))
+        []    -> return (Left ("No PDS service in DID document for " ++ T.unpack did))
   where
-    go :: DidResolver r => r -> IO (Either String DidDocumentLike)
-    go resolver = do
-      eDoc <- resolve resolver did
-      case eDoc of
-        Left err  -> return (Left (show err))
-        Right doc ->
-          case filter (\s -> serviceType s == "AtprotoPersonalDataServer") (didDocServices doc) of
-            (s:_) -> return (Right (DidDocumentLike (serviceEndpoint s)))
-            []    -> return (Left ("No PDS service in DID document for " ++ T.unpack did))
+    isPds s = serviceType s == "AtprotoPersonalDataServer"

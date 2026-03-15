@@ -76,9 +76,14 @@ module ATProto.DID
     -- * did:web resolver
   , WebResolver
   , newWebResolver
+    -- * Dynamic did resolver
+  , DispatchResolver
+  , newDispatchResolver
+  , defaultDispatchResolver
   ) where
 
 import ATProto.DID.Document
 import ATProto.DID.Resolver
+import ATProto.DID.Resolver.Dispatch
 import ATProto.DID.Resolver.PLC
 import ATProto.DID.Resolver.Web

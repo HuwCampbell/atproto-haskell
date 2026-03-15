@@ -22,12 +22,14 @@ library
       ATProto.DID
       ATProto.DID.Document
       ATProto.DID.Resolver
+      ATProto.DID.Resolver.Dispatch
       ATProto.DID.Resolver.PLC
       ATProto.DID.Resolver.Web
   build-depends:
       base            >= 4.14 && < 5
     , aeson           >= 2.0  && < 2.3
     , bytestring      >= 0.10 && < 0.13
+    , cache           >= 0.1  && < 0.2
     , http-client     >= 0.7  && < 0.8
     , http-client-tls >= 0.3  && < 0.5
     , http-types     >= 0.12 && < 0.13
