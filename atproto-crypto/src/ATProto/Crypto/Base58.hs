@@ -12,10 +12,10 @@ module ATProto.Crypto.Base58
   ) where
 
 import qualified Data.ByteString  as BS
-import Data.List                  (elemIndex)
+import qualified Data.ByteString.Char8 as Char8
 
 -- | The base58btc alphabet.
-alphabet :: String
+alphabet :: BS.ByteString
 alphabet = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
 
 -- | Encode a 'BS.ByteString' to its base58btc 'String' representation.
@@ -24,17 +24,17 @@ encodeBase58 bs =
   let leadingZeroCount = BS.length (BS.takeWhile (== 0) bs)
       n      = bsToInteger bs
       digits = integerToBase58Digits n
-      prefix = replicate leadingZeroCount '1'   -- '1' represents a zero byte
-  in prefix ++ map (alphabet !!) digits
+      prefix = replicate leadingZeroCount '1' -- '1' represents a zero byte
+  in prefix <> (Char8.index alphabet <$> digits)
 
 -- | Decode a base58btc 'String' to a 'BS.ByteString'.
 --
 -- Returns 'Nothing' if the input contains characters outside the alphabet.
-decodeBase58 :: String -> Maybe BS.ByteString
+decodeBase58 :: String  -> Maybe BS.ByteString
 decodeBase58 s =
   let leadingOnes = length (takeWhile (== '1') s)
       rest        = dropWhile (== '1') s
-  in case mapM (`elemIndex` alphabet) rest of
+  in case mapM (`Char8.elemIndex` alphabet) rest of
        Nothing     -> Nothing
        Just digits ->
          let n      = base58DigitsToInteger digits
