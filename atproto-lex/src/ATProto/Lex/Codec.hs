@@ -1,3 +1,4 @@
+{-# LANGUAGE LambdaCase #-}
 -- | Core codec combinators for the AT Protocol Lexicon type system.
 --
 -- A 'Codec' @a@ bundles a 'LexSchema' (for documentation), a decoder from
@@ -44,6 +45,9 @@ module ATProto.Lex.Codec
   , fallbackField
     -- * Union
   , union
+  , union3
+  , union4
+  , union5
   , unionVariant
   ) where
 
@@ -55,8 +59,8 @@ import           Data.ByteString     (ByteString)
 import           Data.Int            (Int64)
 import           Data.Profunctor     (Profunctor (..))
 
-import ATProto.Ipld.Value (BlobRef (..), Cid, LexValue (..))
-import ATProto.Lex.Schema
+import           ATProto.Ipld.Value  (BlobRef (..), Cid, LexValue (..))
+import           ATProto.Lex.Schema
 
 -- ---------------------------------------------------------------------------
 -- Errors
@@ -395,31 +399,53 @@ fallbackField name c def proj = StructBuilder
 --
 -- During encoding, each variant's writer is tried in order; the first one
 -- that produces a non-'Nothing' result is used.
-union :: [Codec a] -> Codec a
-union variants = Codec
-  { schema  = LexSchemaUnion []
-  , decoder = \v -> case v of
-        LexObject m ->
+union :: Codec a -> Codec b -> Codec (Either a b)
+union leftCodec rightCodec =
+  case (schema leftCodec, schema rightCodec) of
+    (LexSchemaUnion leftVariants, LexSchemaUnion rightVariants) ->
+      Codec {
+        schema = LexSchemaUnion (leftVariants <> rightVariants)
+      , decoder = \v -> case v of
+          LexObject m ->
             case Map.lookup "$type" m of
-                Nothing -> Left (MissingField "$type")
-                Just (LexString tag) ->
-                    let go [] = Left (UnknownVariant tag)
-                        go (c:cs) = case decoder c v of
-                            Right a -> Right a
-                            Left  _ -> go cs
-                    in  go variants
-                Just bad -> Left (TypeMismatch "$type" bad)
-        _ -> Left (TypeMismatch "union" v)
-  , writer  = \a ->
-        -- Try each variant's writer in order; variants that don't handle
-        -- the given constructor return LexNull as a sentinel value, which
-        -- is safe because union-typed values always encode to LexObject.
-        let go []     = LexNull
-            go (c:cs) = case writer c a of
-                LexNull -> go cs
-                result  -> result
-        in  go variants
-  }
+              Nothing -> Left (MissingField "$type")
+              Just (LexString tag) ->
+                if tag `elem` (variantType <$> leftVariants) then
+                  Left <$> decoder leftCodec v
+                else
+                  Right <$> decoder rightCodec v
+              Just bad -> Left (TypeMismatch "$type" bad)
+          _ -> Left (TypeMismatch "union" v)
+      , writer = either (writer leftCodec) (writer rightCodec)
+      }
+
+    _ ->
+      Codec {
+        schema  = LexSchemaUnion []
+      , decoder = const $ Left (TypeMismatch "union" LexNull)
+      , writer  = const LexNull
+      }
+
+{-| Construct a union from 3 codecs.
+-}
+union3 :: Codec a -> Codec b -> Codec c -> Codec (Either a (Either b c))
+union3 a b c =
+     a `union` union b c
+
+
+{-| Construct a union from 4 codecs.
+-}
+union4 :: Codec a -> Codec b -> Codec c -> Codec d -> Codec (Either (Either a b) (Either c d))
+union4 a b c d =
+    union a b `union` union c d
+
+
+{-| Construct a union from 5 codecs.
+-}
+union5 :: Codec a -> Codec b -> Codec c -> Codec d -> Codec e -> Codec (Either (Either a b) (Either c (Either d e)))
+union5 a b c d e =
+    union a b `union` union3 c d e
+
 
 -- | Build a single variant for use with 'union'.
 --
@@ -434,33 +460,28 @@ union variants = Codec
 unionVariant
   :: T.Text          -- ^ @$type@ tag
   -> Codec a         -- ^ Body codec
-  -> (s -> Maybe a)  -- ^ Project @a@ out of the sum type for encoding
-  -> (a -> s)        -- ^ Inject @a@ into the sum type after decoding
-  -> Codec s
-unionVariant tag bodyCodec toMaybe fromVariant = Codec
-  { schema  = LexSchemaUnion [LexUnionVariant tag (schema bodyCodec)]
+  -> Codec a
+unionVariant tag bodyCodec = Codec
+  { schema = LexSchemaUnion [LexUnionVariant tag (schema bodyCodec)]
   , decoder = \v -> case v of
+      LexObject m ->
+        case Map.lookup "$type" m of
+          Just (LexString t) | t == tag ->
+            decoder bodyCodec v
+          Just (LexString t) ->
+            Left (UnknownVariant t)
+          _ ->
+            Left (MissingField "$type")
+      _ -> Left (TypeMismatch tag v)
+  , writer = \s ->
+      case writer bodyCodec s of
         LexObject m ->
-            case Map.lookup "$type" m of
-                Just (LexString t) | t == tag ->
-                    fmap fromVariant (decoder bodyCodec v)
-                Just (LexString t) ->
-                    Left (UnknownVariant t)
-                _ ->
-                    Left (MissingField "$type")
-        _ -> Left (TypeMismatch tag v)
-  , writer  = \s ->
-        case toMaybe s of
-            Nothing -> LexNull
-            Just a  ->
-                case writer bodyCodec a of
-                    LexObject m ->
-                        LexObject (Map.insert "$type" (LexString tag) m)
-                    other ->
-                        LexObject (Map.fromList
-                            [ ("$type", LexString tag)
-                            , ("value", other)
-                            ])
+          LexObject (Map.insert "$type" (LexString tag) m)
+        other ->
+          LexObject (Map.fromList
+            [ ("$type", LexString tag)
+            , ("value", other)
+            ])
   }
 
 -- ---------------------------------------------------------------------------

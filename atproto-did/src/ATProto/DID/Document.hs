@@ -20,7 +20,6 @@ module ATProto.DID.Document
   ) where
 
 import qualified Data.Aeson       as Aeson
-import qualified Data.Aeson.Types as Aeson
 import qualified Data.Text        as T
 
 -- | A resolved DID document.

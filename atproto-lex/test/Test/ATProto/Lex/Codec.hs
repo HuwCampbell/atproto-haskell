@@ -1,3 +1,4 @@
+{-# LANGUAGE LambdaCase #-}
 -- | Property tests for the 'ATProto.Lex.Codec' combinators.
 --
 -- Covers:
@@ -49,18 +50,20 @@ data MyUnion
   deriving (Eq, Show)
 
 myUnionCodec :: Codec.Codec MyUnion
-myUnionCodec = Codec.union
-    [ Codec.unionVariant "example.text"
+myUnionCodec =
+  let
+    to = \case
+      MyText a -> Left a
+      MyInt a -> Right a
+  in
+  Codec.invmap (either MyText MyInt) to $
+    Codec.union
+      (Codec.unionVariant "example.text"
         (Codec.record "example.text" $
-            id <$> Codec.requiredField "value" Codec.text id)
-        (\u -> case u of { MyText t -> Just t; _ -> Nothing })
-        MyText
-    , Codec.unionVariant "example.int"
+          Codec.requiredField "value" Codec.text id))
+      (Codec.unionVariant "example.int"
         (Codec.record "example.int" $
-            id <$> Codec.requiredField "value" Codec.int id)
-        (\u -> case u of { MyInt n -> Just n; _ -> Nothing })
-        MyInt
-    ]
+          Codec.requiredField "value" Codec.int id))
 
 -- ---------------------------------------------------------------------------
 -- 1. JSON round-trips for primitives

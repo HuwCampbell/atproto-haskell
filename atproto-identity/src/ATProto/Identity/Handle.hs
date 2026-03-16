@@ -46,7 +46,7 @@ import           Network.HTTP.Types.Status (statusCode)
 -- ---------------------------------------------------------------------------
 
 -- | Configuration options for 'HandleResolver'.
-data HandleResolverOpts = HandleResolverOpts
+newtype HandleResolverOpts = HandleResolverOpts
   { hroBackupNameserverIps :: [String]
     -- ^ Numeric IP addresses of backup DNS nameservers to try if the
     -- system resolver returns no result.  Host names are not accepted;

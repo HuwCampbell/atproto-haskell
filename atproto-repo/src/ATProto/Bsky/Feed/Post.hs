@@ -390,20 +390,23 @@ facetTagCodec =
 
 -- | Codec for the 'FacetFeature' union.
 facetFeatureCodec :: Codec FacetFeature
-facetFeatureCodec = Codec.union
-  [ Codec.unionVariant "app.bsky.richtext.facet#mention"
-        facetMentionCodec
-        (\f -> case f of { FacetFeatureMention m -> Just m; _ -> Nothing })
-        FacetFeatureMention
-  , Codec.unionVariant "app.bsky.richtext.facet#link"
-        facetLinkCodec
-        (\f -> case f of { FacetFeatureLink l -> Just l; _ -> Nothing })
-        FacetFeatureLink
-  , Codec.unionVariant "app.bsky.richtext.facet#tag"
-        facetTagCodec
-        (\f -> case f of { FacetFeatureTag t -> Just t; _ -> Nothing })
-        FacetFeatureTag
-  ]
+facetFeatureCodec =
+  let
+    from = \case
+      FacetFeatureMention a -> Left a
+      FacetFeatureLink a -> Right (Left a)
+      FacetFeatureTag a -> Right (Right a)
+
+    to = \case
+      Left a -> FacetFeatureMention a
+      Right (Left a) -> FacetFeatureLink a
+      Right (Right a) -> FacetFeatureTag a
+  in
+  Codec.invmap to from $
+    Codec.union3
+      (Codec.unionVariant "app.bsky.richtext.facet#mention" facetMentionCodec)
+      (Codec.unionVariant "app.bsky.richtext.facet#link" facetLinkCodec)
+      (Codec.unionVariant "app.bsky.richtext.facet#tag" facetTagCodec)
 
 -- | Codec for 'Facet'.
 facetCodec :: Codec Facet
@@ -481,20 +484,23 @@ embedRecordCodec =
 
 -- | Codec for the 'MediaEmbed' union.
 mediaEmbedCodec :: Codec MediaEmbed
-mediaEmbedCodec = Codec.union
-  [ Codec.unionVariant "app.bsky.embed.images"
-        embedImagesCodec
-        (\case { MediaEmbedImages i -> Just i; _ -> Nothing })
-        MediaEmbedImages
-  , Codec.unionVariant "app.bsky.embed.video"
-        embedVideoCodec
-        (\case { MediaEmbedVideo v -> Just v; _ -> Nothing })
-        MediaEmbedVideo
-  , Codec.unionVariant "app.bsky.embed.external"
-        embedExternalCodec
-        (\case { MediaEmbedExternal e -> Just e; _ -> Nothing })
-        MediaEmbedExternal
-  ]
+mediaEmbedCodec =
+  let
+    from = \case
+      MediaEmbedImages a -> Left a
+      MediaEmbedVideo a -> Right (Left a)
+      MediaEmbedExternal a -> Right (Right a)
+
+    to = \case
+      Left a -> MediaEmbedImages a
+      Right (Left a) -> MediaEmbedVideo a
+      Right (Right a) -> MediaEmbedExternal a
+  in
+  Codec.invmap to from $
+    Codec.union3
+      (Codec.unionVariant "app.bsky.embed.images" embedImagesCodec)
+      (Codec.unionVariant "app.bsky.embed.video" embedVideoCodec)
+      (Codec.unionVariant "app.bsky.embed.external" embedExternalCodec)
 
 -- | Codec for 'EmbedRecordWithMedia'.
 embedRecordWithMediaCodec :: Codec EmbedRecordWithMedia
@@ -506,28 +512,30 @@ embedRecordWithMediaCodec =
 
 -- | Codec for the 'PostEmbed' union.
 postEmbedCodec :: Codec PostEmbed
-postEmbedCodec = Codec.union
-  [ Codec.unionVariant "app.bsky.embed.images"
-        embedImagesCodec
-        (\case { PostEmbedImages i -> Just i; _ -> Nothing })
-        PostEmbedImages
-  , Codec.unionVariant "app.bsky.embed.video"
-        embedVideoCodec
-        (\case { PostEmbedVideo v -> Just v; _ -> Nothing })
-        PostEmbedVideo
-  , Codec.unionVariant "app.bsky.embed.external"
-        embedExternalCodec
-        (\case { PostEmbedExternal x -> Just x; _ -> Nothing })
-        PostEmbedExternal
-  , Codec.unionVariant "app.bsky.embed.record"
-        embedRecordCodec
-        (\case { PostEmbedRecord r -> Just r; _ -> Nothing })
-        PostEmbedRecord
-  , Codec.unionVariant "app.bsky.embed.recordWithMedia"
-        embedRecordWithMediaCodec
-        (\case { PostEmbedRecordWithMedia rwm -> Just rwm; _ -> Nothing })
-        PostEmbedRecordWithMedia
-  ]
+postEmbedCodec =
+  let
+    from = \case
+      PostEmbedImages a -> Left (Left a)
+      PostEmbedVideo a -> Left (Right a)
+      PostEmbedExternal a -> Right (Left a)
+      PostEmbedRecord a -> Right (Right (Left a))
+      PostEmbedRecordWithMedia a -> Right (Right (Right a))
+
+    to = \case
+      Left (Left a) -> PostEmbedImages a
+      Left (Right a) -> PostEmbedVideo a
+      Right (Left a) -> PostEmbedExternal a
+      Right (Right (Left a)) -> PostEmbedRecord a
+      Right (Right (Right a)) -> PostEmbedRecordWithMedia a
+  in
+  Codec.invmap to from $
+    Codec.union5
+      (Codec.unionVariant "app.bsky.embed.images" embedImagesCodec)
+      (Codec.unionVariant "app.bsky.embed.video" embedVideoCodec)
+      (Codec.unionVariant "app.bsky.embed.external" embedExternalCodec)
+      (Codec.unionVariant "app.bsky.embed.record" embedRecordCodec)
+      (Codec.unionVariant "app.bsky.embed.recordWithMedia" embedRecordWithMediaCodec)
+
 
 -- | Codec for 'SelfLabelValue'.
 selfLabelValueCodec :: Codec SelfLabelValue
@@ -545,12 +553,14 @@ selfLabelsCodec =
 
 -- | Codec for the 'PostLabels' union.
 postLabelsCodec :: Codec PostLabels
-postLabelsCodec = Codec.union
-  [ Codec.unionVariant "com.atproto.label.defs#selfLabels"
-        selfLabelsCodec
-        (\case { PostLabelsSelf s -> Just s })
-        PostLabelsSelf
-  ]
+postLabelsCodec =
+  let
+    from (PostLabelsSelf a) = a
+    to = PostLabelsSelf
+  in
+  Codec.invmap to from $
+    Codec.unionVariant "com.atproto.label.defs#selfLabels" selfLabelsCodec
+
 
 -- | Codec for 'FeedPost'.
 --
