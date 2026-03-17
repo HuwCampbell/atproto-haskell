@@ -45,7 +45,7 @@ import           ATProto.DID.Resolver.Web
 data DispatchResolver = DispatchResolver
   { plcResolver :: PlcResolver
     -- ^ The PLC Resolver to dispatch to.
-  , webResolve  :: WebResolver
+  , webResolver :: WebResolver
     -- ^ The Web Resolver to dispatch to.
   }
 
