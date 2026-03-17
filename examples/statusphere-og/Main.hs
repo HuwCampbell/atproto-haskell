@@ -46,6 +46,7 @@ import           Network.Wai              (Application, Request, Response,
                                            requestHeaders)
 import qualified Network.Wai.Handler.Warp as Warp
 import           System.Directory         (doesFileExist)
+import           Web.ClientSession        (Key, getDefaultKey, encryptIO, decrypt)
 
 import           ATProto.OAuth            (AuthorizeParams (..),
                                            AuthorizeResult (..),
@@ -93,6 +94,9 @@ main = do
   mgr <- newManager tlsManagerSettings
   sessions <- newIORef Map.empty
 
+  -- Load or create the clientsession encryption key.
+  sessionKey <- getDefaultKey
+
   -- Initialise the database.
   withDatabase dbPath $ \conn -> do
     migrate conn
@@ -107,14 +111,14 @@ main = do
 
     -- Start the web server.
     TIO.putStrLn $ "Listening on http://127.0.0.1:" <> T.pack (show port)
-    Warp.run port (app conn mgr oauthClient sessions)
+    Warp.run port (app conn mgr oauthClient sessions sessionKey)
 
 -- ---------------------------------------------------------------------------
 -- WAI application
 -- ---------------------------------------------------------------------------
 
-app :: Connection -> Manager -> OAuthClient -> SessionMap -> Application
-app conn mgr oauthClient sessions req respond = do
+app :: Connection -> Manager -> OAuthClient -> SessionMap -> Key -> Application
+app conn mgr oauthClient sessions sessionKey req respond = do
   let meth = requestMethod req
       path = pathInfo req
   case (meth, path) of
@@ -124,7 +128,7 @@ app conn mgr oauthClient sessions req respond = do
 
     -- Home page
     ("GET", []) ->
-      handleHome conn req respond
+      handleHome conn sessionKey req respond
 
     -- Login page
     ("GET", ["login"]) ->
@@ -136,15 +140,15 @@ app conn mgr oauthClient sessions req respond = do
 
     -- OAuth callback
     ("GET", ["oauth", "callback"]) ->
-      handleCallback oauthClient sessions req respond
+      handleCallback oauthClient sessions sessionKey req respond
 
     -- Logout
     ("POST", ["logout"]) ->
-      handleLogout sessions req respond
+      handleLogout sessions sessionKey req respond
 
     -- Set status
     ("POST", ["status"]) ->
-      handleSetStatus conn mgr oauthClient sessions req respond
+      handleSetStatus conn mgr oauthClient sessions sessionKey req respond
 
     -- 404
     _ ->
@@ -170,10 +174,10 @@ serveStatic filename _req respond = do
       | otherwise                = "application/octet-stream"
 
 -- | Home page: show recent statuses.
-handleHome :: Connection -> Application
-handleHome conn req respond = do
+handleHome :: Connection -> Key -> Application
+handleHome conn sessionKey req respond = do
   statuses <- getRecentStatuses conn
-  let mDid = getCookie "did" req
+  let mDid = getSessionDid sessionKey req
   myStatus <- case mDid of
     Just did -> getMyStatus conn did
     Nothing  -> return Nothing
@@ -208,8 +212,8 @@ handleLogin oauthClient req respond = do
           respond $ redirectResponse (arRedirectUrl authResult) []
 
 -- | OAuth callback: exchange code for session.
-handleCallback :: OAuthClient -> SessionMap -> Application
-handleCallback oauthClient sessions req respond = do
+handleCallback :: OAuthClient -> SessionMap -> Key -> Application
+handleCallback oauthClient sessions sessionKey req respond = do
   let qs = queryToQueryText (queryString req)
       mCode  = lookup "code"  qs >>= id
       mState = lookup "state" qs >>= id
@@ -230,27 +234,29 @@ handleCallback oauthClient sessions req respond = do
           -- Store the session in our in-memory map
           modifyIORef' sessions (Map.insert did session)
           TIO.putStrLn $ "Logged in: " <> did
+          encrypted <- encryptIO sessionKey (TE.encodeUtf8 did)
+          let cookieVal = TE.decodeUtf8Lenient encrypted
           respond $ redirectResponse "/"
-            [("Set-Cookie", TE.encodeUtf8 ("did=" <> did <> "; Path=/; HttpOnly"))]
+            [("Set-Cookie", TE.encodeUtf8 ("session=" <> cookieVal <> "; Path=/; HttpOnly"))]
 
     _ -> do
       TIO.putStrLn "OAuth callback: missing parameters"
       respond $ redirectResponse "/" []
 
 -- | Handle logout.
-handleLogout :: SessionMap -> Application
-handleLogout sessions req respond = do
-  let mDid = getCookie "did" req
+handleLogout :: SessionMap -> Key -> Application
+handleLogout sessions sessionKey req respond = do
+  let mDid = getSessionDid sessionKey req
   case mDid of
     Just did -> modifyIORef' sessions (Map.delete did)
     Nothing  -> return ()
   respond $ redirectResponse "/"
-    [("Set-Cookie", "did=; Path=/; HttpOnly; Max-Age=0")]
+    [("Set-Cookie", "session=; Path=/; HttpOnly; Max-Age=0")]
 
 -- | Handle set-status form: write to PDS, then optimistic local insert.
-handleSetStatus :: Connection -> Manager -> OAuthClient -> SessionMap -> Application
-handleSetStatus conn mgr oauthClient sessions req respond = do
-  let mDid = getCookie "did" req
+handleSetStatus :: Connection -> Manager -> OAuthClient -> SessionMap -> Key -> Application
+handleSetStatus conn mgr oauthClient sessions sessionKey req respond = do
+  let mDid = getSessionDid sessionKey req
   case mDid of
     Nothing ->
       respond $ responseLBS status401 [(hContentType, "text/html; charset=utf-8")]
@@ -268,7 +274,7 @@ handleSetStatus conn mgr oauthClient sessions req respond = do
           sessionMap <- readIORef sessions
           case Map.lookup did sessionMap of
             Nothing -> do
-              respond $ redirectResponse "/" [("Set-Cookie", "did=; Path=/; HttpOnly; Max-Age=0")]
+              respond $ redirectResponse "/" [("Set-Cookie", "session=; Path=/; HttpOnly; Max-Age=0")]
             Just session -> do
               -- Create an authenticated XRPC client
               xrpcClient <- newOAuthXrpcClient mgr oauthClient did session
@@ -343,6 +349,16 @@ getCookie name req =
           , let (k, v) = T.breakOn "=" p
           , not (T.null v)
           ]
+
+-- | Decrypt the session cookie and return the DID.
+getSessionDid :: Key -> Request -> Maybe T.Text
+getSessionDid key req =
+  case getCookie "session" req of
+    Nothing  -> Nothing
+    Just raw ->
+      case decrypt key (TE.encodeUtf8 raw) of
+        Nothing -> Nothing
+        Just bs -> Just (TE.decodeUtf8Lenient bs)
 
 -- | Generate a TID-like record key (microsecond timestamp).
 generateRkey :: IO T.Text
