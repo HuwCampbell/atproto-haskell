@@ -55,6 +55,7 @@ import           Network.Wai              (Application, Request, Response,
 import qualified Network.Wai.Handler.Warp as Warp
 import           System.Directory         (doesFileExist)
 import           System.Environment       (getArgs)
+import           Web.ClientSession        (Key, getDefaultKey, encryptIO, decrypt)
 
 import qualified ATProto.Lex.Codec        as Codec
 import qualified ATProto.Lex.Json         as LexJson
@@ -99,6 +100,9 @@ main = do
   mgr      <- newManager tlsManagerSettings
   sessions <- newIORef Map.empty
 
+  -- Load or create the clientsession encryption key.
+  sessionKey <- getDefaultKey
+
   -- Initialise the database.
   withDatabase dbPath $ \conn -> do
     migrate conn
@@ -114,7 +118,7 @@ main = do
 
     -- Start the web server.
     TIO.putStrLn $ "Listening on http://127.0.0.1:" <> T.pack (show port)
-    Warp.run port (app conn mgr oauthClient sessions port)
+    Warp.run port (app conn mgr oauthClient sessions port sessionKey)
 
 -- | Parse command line arguments for tap host/port.
 parseArgs :: [String] -> String -> Int -> (String, Int)
@@ -127,8 +131,8 @@ parseArgs (_ : rest) h p = parseArgs rest h p
 -- WAI application
 -- ---------------------------------------------------------------------------
 
-app :: Connection -> Manager -> OAuthClient -> SessionMap -> Int -> Application
-app conn mgr oauthClient sessions port req respond = do
+app :: Connection -> Manager -> OAuthClient -> SessionMap -> Int -> Key -> Application
+app conn mgr oauthClient sessions port sessionKey req respond = do
   let meth = requestMethod req
       path = pathInfo req
   case (meth, path) of
@@ -137,11 +141,11 @@ app conn mgr oauthClient sessions port req respond = do
       handleGetStatuses conn req respond
 
     ("POST", ["xrpc", "xyz.statusphere.setStatus"]) ->
-      handleSetStatus conn mgr oauthClient sessions req respond
+      handleSetStatus conn mgr oauthClient sessions sessionKey req respond
 
     -- Session info
     ("GET", ["xrpc", "xyz.statusphere.getSession"]) ->
-      handleGetSession req respond
+      handleGetSession sessionKey req respond
 
     -- OAuth routes
     ("GET", ["login"]) ->
@@ -151,10 +155,10 @@ app conn mgr oauthClient sessions port req respond = do
       handleLogin oauthClient port req respond
 
     ("GET", ["oauth", "callback"]) ->
-      handleCallback oauthClient sessions req respond
+      handleCallback oauthClient sessions sessionKey req respond
 
     ("POST", ["logout"]) ->
-      handleLogout sessions req respond
+      handleLogout sessions sessionKey req respond
 
     -- Static files
     ("GET", []) ->
@@ -186,9 +190,9 @@ handleGetStatuses conn _req respond = do
 -- ---------------------------------------------------------------------------
 
 -- | Set the user's status: writes to PDS, then optimistically inserts.
-handleSetStatus :: Connection -> Manager -> OAuthClient -> SessionMap -> Application
-handleSetStatus conn mgr oauthClient sessions req respond = do
-  let mDid = getCookie "did" req
+handleSetStatus :: Connection -> Manager -> OAuthClient -> SessionMap -> Key -> Application
+handleSetStatus conn mgr oauthClient sessions sessionKey req respond = do
+  let mDid = getSessionDid sessionKey req
   case mDid of
     Nothing ->
       respond $ jsonError status401 "AuthRequired" "Login required"
@@ -240,9 +244,9 @@ handleSetStatus conn mgr oauthClient sessions req respond = do
 -- ---------------------------------------------------------------------------
 
 -- | Return the current user's DID if logged in.
-handleGetSession :: Application
-handleGetSession req respond = do
-  let mDid = getCookie "did" req
+handleGetSession :: Key -> Application
+handleGetSession sessionKey req respond = do
+  let mDid = getSessionDid sessionKey req
   case mDid of
     Nothing ->
       respond $ responseLBS status200
@@ -298,8 +302,8 @@ startOAuth oauthClient port handle' respond = do
       respond $ redirectResponse (arRedirectUrl authResult) []
 
 -- | OAuth callback: exchange code for session.
-handleCallback :: OAuthClient -> SessionMap -> Application
-handleCallback oauthClient sessions req respond = do
+handleCallback :: OAuthClient -> SessionMap -> Key -> Application
+handleCallback oauthClient sessions sessionKey req respond = do
   let qs = queryToQueryText (queryString req)
       mCode  = lookup "code"  qs >>= id
       mState = lookup "state" qs >>= id
@@ -319,22 +323,24 @@ handleCallback oauthClient sessions req respond = do
           let did' = tsSub (sessTokenSet session)
           modifyIORef' sessions (Map.insert did' session)
           TIO.putStrLn $ "Logged in: " <> did'
+          encrypted <- encryptIO sessionKey (TE.encodeUtf8 did')
+          let cookieVal = TE.decodeUtf8Lenient encrypted
           respond $ redirectResponse "/"
-            [("Set-Cookie", TE.encodeUtf8 ("did=" <> did' <> "; Path=/; HttpOnly; SameSite=Lax"))]
+            [("Set-Cookie", TE.encodeUtf8 ("session=" <> cookieVal <> "; Path=/; HttpOnly; SameSite=Lax"))]
 
     _ -> do
       TIO.putStrLn "OAuth callback: missing parameters"
       respond $ redirectResponse "/" []
 
 -- | Logout.
-handleLogout :: SessionMap -> Application
-handleLogout sessions req respond = do
-  let mDid = getCookie "did" req
+handleLogout :: SessionMap -> Key -> Application
+handleLogout sessions sessionKey req respond = do
+  let mDid = getSessionDid sessionKey req
   case mDid of
     Just did' -> modifyIORef' sessions (Map.delete did')
     Nothing   -> return ()
   respond $ redirectResponse "/"
-    [("Set-Cookie", "did=; Path=/; HttpOnly; Max-Age=0")]
+    [("Set-Cookie", "session=; Path=/; HttpOnly; Max-Age=0")]
 
 -- ---------------------------------------------------------------------------
 -- Static files
@@ -421,6 +427,16 @@ getCookie name req =
           , let (k, v) = T.breakOn "=" p
           , not (T.null v)
           ]
+
+-- | Decrypt the session cookie and return the DID.
+getSessionDid :: Key -> Request -> Maybe T.Text
+getSessionDid key req =
+  case getCookie "session" req of
+    Nothing  -> Nothing
+    Just raw ->
+      case decrypt key (TE.encodeUtf8 raw) of
+        Nothing -> Nothing
+        Just bs -> Just (TE.decodeUtf8Lenient bs)
 
 -- | Generate a TID-like record key (microsecond timestamp).
 generateRkey :: IO T.Text
