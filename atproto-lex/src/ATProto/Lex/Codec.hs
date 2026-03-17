@@ -425,12 +425,14 @@ union leftCodec rightCodec =
       , decoder = const $ Left (TypeMismatch "union" LexNull)
       , writer  = const LexNull
       }
+{-# INLINABLE union #-}
 
 {-| Construct a union from 3 codecs.
 -}
 union3 :: Codec a -> Codec b -> Codec c -> Codec (Either a (Either b c))
 union3 a b c =
      a `union` union b c
+{-# INLINABLE union3 #-}
 
 
 {-| Construct a union from 4 codecs.
@@ -438,6 +440,7 @@ union3 a b c =
 union4 :: Codec a -> Codec b -> Codec c -> Codec d -> Codec (Either (Either a b) (Either c d))
 union4 a b c d =
     union a b `union` union c d
+{-# INLINABLE union4 #-}
 
 
 {-| Construct a union from 5 codecs.
@@ -445,6 +448,7 @@ union4 a b c d =
 union5 :: Codec a -> Codec b -> Codec c -> Codec d -> Codec e -> Codec (Either (Either a b) (Either c (Either d e)))
 union5 a b c d e =
     union a b `union` union3 c d e
+{-# INLINABLE union5 #-}
 
 
 -- | Build a single variant for use with 'union'.
@@ -483,6 +487,7 @@ unionVariant tag bodyCodec = Codec
             , ("value", other)
             ])
   }
+{-# INLINE unionVariant #-}
 
 -- ---------------------------------------------------------------------------
 -- Internal helpers
