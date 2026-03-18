@@ -28,13 +28,14 @@ module ATProto.OAuth.XrpcClient
   ) where
 
 import           Control.Exception    (SomeException, catch)
-import           Data.IORef           (IORef, newIORef, readIORef, writeIORef)
+import           Data.IORef           (IORef, readIORef, modifyIORef', modifyIORef)
 import qualified Data.Map.Strict      as Map
 import qualified Data.Text            as T
 import qualified Data.Text.Encoding   as TE
 import           Network.HTTP.Client  (Manager)
 
-import           ATProto.OAuth.Client  (OAuthClient, Session (..), getTokenInfo)
+import           ATProto.OAuth.Client  (OAuthClient , Session (..),
+                                        getTokenInfo, clientNonceCache)
 import           ATProto.OAuth.DPoP    (DpopClaims (..), DpopKey,
                                         accessTokenHash, createDpopProof)
 import           ATProto.OAuth.Types   (OAuthError (..), TokenSet (..))
@@ -63,7 +64,7 @@ data OAuthXrpcClient = OAuthXrpcClient
     -- ^ OAuth client used for token refresh via 'getTokenInfo'.
   , oacDid         :: T.Text
     -- ^ DID of the authenticated user.
-  , oacNonceRef    :: IORef (Maybe T.Text)
+  , oacNonceRef    :: IORef (Map.Map T.Text T.Text)
     -- ^ Cached DPoP nonce for this PDS, updated from response headers.
   }
 
@@ -82,7 +83,6 @@ newOAuthXrpcClient
   -> Session      -- ^ Session from 'callback'
   -> IO OAuthXrpcClient
 newOAuthXrpcClient mgr oauthClient did session = do
-  nonceRef <- newIORef Nothing
   let pdsUrl = tsAud (sessTokenSet session)
   return OAuthXrpcClient
     { oacInner       = newHttpXrpcClientWith mgr pdsUrl
@@ -90,7 +90,7 @@ newOAuthXrpcClient mgr oauthClient did session = do
     , oacDpopKey     = sessDpopKey session
     , oacOAuthClient = oauthClient
     , oacDid         = did
-    , oacNonceRef    = nonceRef
+    , oacNonceRef    = clientNonceCache oauthClient
     }
 
 -- ---------------------------------------------------------------------------
@@ -109,7 +109,7 @@ instance XrpcClient OAuthXrpcClient where
             case mNonce of
               Nothing    -> return (Left err)
               Just nonce -> do
-                writeIORef (oacNonceRef client) (Just nonce)
+                modifyIORef' (oacNonceRef client) (Map.insert (oacPdsUrl client) nonce)
                 runOAuthXrpc client req
         | otherwise -> return (Left err)
 
@@ -138,7 +138,10 @@ runOAuthXrpc client req = do
           -- Resource URL without query string (RFC 9449 §4.2).
           resourceUrl = oacPdsUrl client <> "/xrpc/" <> xrpcReqNsid req
           ath         = TE.decodeUtf8Lenient (accessTokenHash accessToken)
-      cachedNonce <- readIORef (oacNonceRef client)
+      cachedNonce <-
+        Map.lookup (oacPdsUrl client)
+          <$> readIORef (oacNonceRef client)
+
       eProof <- createDpopProof (oacDpopKey client) DpopClaims
         { dcHtm   = httpMethod
         , dcHtu   = resourceUrl
@@ -165,6 +168,6 @@ runOAuthXrpc client req = do
                               Right resp -> xrpcRespHeaders resp
                               Left  e    -> xrpcErrHeaders e
           case Map.lookup "dpop-nonce" respHeaders of
-            Just nonce -> writeIORef (oacNonceRef client) (Just nonce)
+            Just nonce -> modifyIORef (oacNonceRef client) (Map.insert (oacPdsUrl client) nonce)
             Nothing    -> return ()
           return result

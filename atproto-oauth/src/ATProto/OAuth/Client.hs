@@ -42,6 +42,8 @@ module ATProto.OAuth.Client
     -- * Client
   , OAuthClient
   , newOAuthClient
+    -- * Accessor for the nonce cache
+  , clientNonceCache
     -- * State and session data
   , StateData (..)
   , Session (..)
@@ -182,6 +184,9 @@ newOAuthClient cfg ss ses = do
     , ocSessionStore = ses
     , ocNonceCache   = nonceRef
     }
+
+clientNonceCache :: OAuthClient -> IORef (Map.Map T.Text T.Text)
+clientNonceCache = ocNonceCache
 
 -- ---------------------------------------------------------------------------
 -- State and session data
