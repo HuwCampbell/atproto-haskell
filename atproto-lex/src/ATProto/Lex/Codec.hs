@@ -280,6 +280,11 @@ fallback def c = Codec
 -- Object / record builder
 -- ---------------------------------------------------------------------------
 
+-- | Different list
+--   This is used for performance reasons in the Struct Builder, so that
+--   concatenation and building isn't O(N²).
+type DList a = [a] -> [a]
+
 -- | A builder for object codecs.
 --
 -- @StructBuilder b a@ is:
@@ -290,9 +295,9 @@ fallback def c = Codec
 -- Build a complete struct codec with 'record', combining field builders with
 -- 'requiredField', 'optionalField', and 'fallbackField' using '<*>'.
 data StructBuilder b a = StructBuilder
-  { sbFields  :: [LexField]
+  { sbFields  :: DList LexField
   , sbDecoder :: Map.Map T.Text LexValue -> Either LexError a
-  , sbWriter  :: b -> [(T.Text, LexValue)]
+  , sbWriter  :: b -> DList (T.Text, LexValue)
   }
 
 instance Functor (StructBuilder b) where
@@ -300,14 +305,14 @@ instance Functor (StructBuilder b) where
 
 instance Applicative (StructBuilder b) where
   pure x = StructBuilder
-    { sbFields  = []
+    { sbFields  = id
     , sbDecoder = const (Right x)
-    , sbWriter  = const []
+    , sbWriter  = const id
     }
   sf <*> sx = StructBuilder
-    { sbFields  = sbFields sf ++ sbFields sx
+    { sbFields  = sbFields sf . sbFields sx
     , sbDecoder = \m -> sbDecoder sf m <*> sbDecoder sx m
-    , sbWriter  = \b -> sbWriter sf b ++ sbWriter sx b
+    , sbWriter  = \b -> sbWriter sf b . sbWriter sx b
     }
 
 instance Profunctor StructBuilder where
@@ -326,12 +331,12 @@ type StructCodec a = StructBuilder a a
 -- encoded object.
 record :: T.Text -> StructCodec a -> Codec a
 record name sb = Codec
-  { schema  = LexSchemaObject (sbFields sb)
+  { schema  = LexSchemaObject (sbFields sb [])
   , decoder = \v -> case v of
         LexObject m -> sbDecoder sb m
         _           -> Left (TypeMismatch name v)
   , writer  = \a ->
-        LexObject (Map.fromList (sbWriter sb a))
+        LexObject (Map.fromList (sbWriter sb a []))
   }
 
 -- | Build a required field.
@@ -343,12 +348,12 @@ requiredField
   -> (b -> a)        -- ^ Projection from the source record
   -> StructBuilder b a
 requiredField name c proj = StructBuilder
-  { sbFields  = [LexField name (schema c) True Nothing]
+  { sbFields  = \more -> LexField name (schema c) True Nothing : more
   , sbDecoder = \m ->
         case Map.lookup name m of
             Nothing -> Left (MissingField name)
             Just v  -> decoder c v
-  , sbWriter  = \b -> [(name, writer c (proj b))]
+  , sbWriter  = \b more -> (name, writer c (proj b)) : more
   }
 
 -- | Build an optional field.
@@ -360,7 +365,7 @@ optionalField
   -> (b -> Maybe a)  -- ^ Projection from the source record
   -> StructBuilder b (Maybe a)
 optionalField name c proj = StructBuilder
-  { sbFields  = [LexField name (LexSchemaMaybe (schema c)) False Nothing]
+  { sbFields  = \more -> LexField name (LexSchemaMaybe (schema c)) False Nothing : more
   , sbDecoder = \m ->
         case Map.lookup name m of
             Nothing      -> Right Nothing
@@ -368,8 +373,8 @@ optionalField name c proj = StructBuilder
             Just v       -> fmap Just (decoder c v)
   , sbWriter  = \b ->
         case proj b of
-            Nothing -> []
-            Just a  -> [(name, writer c a)]
+            Nothing -> id
+            Just a  -> \more -> (name, writer c a) : more
   }
 
 -- | Build a field with a default value used when the key is absent.
@@ -380,12 +385,12 @@ fallbackField
   -> (b -> a)        -- ^ Projection from the source record
   -> StructBuilder b a
 fallbackField name c def proj = StructBuilder
-  { sbFields  = [LexField name (schema c) False Nothing]
+  { sbFields  = \more -> LexField name (schema c) False Nothing : more
   , sbDecoder = \m ->
         case Map.lookup name m of
             Nothing -> Right def
             Just v  -> decoder c v
-  , sbWriter  = \b -> [(name, writer c (proj b))]
+  , sbWriter  = \b more -> (name, writer c (proj b)) : more
   }
 
 -- ---------------------------------------------------------------------------
