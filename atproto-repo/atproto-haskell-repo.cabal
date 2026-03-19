@@ -23,6 +23,8 @@ library
   exposed-modules:
       ATProto.Bsky.Feed.Post
       ATProto.Repo
+      ATProto.Repo.CommitMeta
+      ATProto.Repo.DeleteRecord
       ATProto.Repo.GetBlob
       ATProto.Repo.GetProfile
       ATProto.Repo.ListRecords

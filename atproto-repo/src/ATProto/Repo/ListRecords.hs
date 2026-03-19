@@ -23,6 +23,7 @@ module ATProto.Repo.ListRecords
 
 import qualified Data.ByteString.Lazy    as BL
 import qualified Data.Map.Strict         as Map
+import qualified Data.Maybe              as Maybe
 import qualified Data.Text               as T
 
 import           ATProto.Ipld.Value      (LexValue)
@@ -69,10 +70,11 @@ toQueryParams p =
   Map.fromList $
     [ ("repo",       lrpRepo p)
     , ("collection", lrpCollection p)
+    ] ++ Maybe.catMaybes [
+      (\n -> ("limit",  T.pack (show n)))                <$> lrpLimit p
+    , (\c -> ("cursor", c))                              <$> lrpCursor p
+    , (\r -> ("reverse", if r then "true" else "false")) <$> lrpReverse p
     ]
-    ++ maybe [] (\n -> [("limit",  T.pack (show n))]) (lrpLimit p)
-    ++ maybe [] (\c -> [("cursor", c)])                (lrpCursor p)
-    ++ maybe [] (\r -> [("reverse", if r then "true" else "false")]) (lrpReverse p)
 
 -- ---------------------------------------------------------------------------
 -- Response

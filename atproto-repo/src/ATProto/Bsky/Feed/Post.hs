@@ -18,9 +18,6 @@
 --   * <https://github.com/bluesky-social/atproto/blob/main/lexicons/app/bsky/embed/recordWithMedia.json>
 --   * <https://github.com/bluesky-social/atproto/blob/main/lexicons/com/atproto/label/defs.json>
 --
--- __Note:__ This binding is a temporary hand-written stub.  Once a Lexicon
--- code-generator is available the module will be superseded by the
--- generated version.
 module ATProto.Bsky.Feed.Post
   ( -- * Strong reference
     StrongRef (..)

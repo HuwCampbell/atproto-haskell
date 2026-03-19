@@ -3,7 +3,6 @@ module Test.ATProto.Ipld.Cbor (tests) where
 
 import qualified Data.Map.Strict as Map
 import qualified Data.Text       as T
-import           Data.Int        (Int64)
 import           Hedgehog
 import qualified Hedgehog.Gen    as Gen
 import qualified Hedgehog.Range  as Range

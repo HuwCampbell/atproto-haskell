@@ -26,8 +26,9 @@ import           ATProto.Ipld.Value      (LexValue)
 import           ATProto.Lex.Codec       (Codec)
 import qualified ATProto.Lex.Codec       as Codec
 import qualified ATProto.Lex.Json        as LexJson
-import           ATProto.XRPC.Client (XrpcClient (..))
-import           ATProto.XRPC.Types  (XrpcError (..), XrpcMethod (..), XrpcRequest (..), XrpcResponse (..))
+import           ATProto.Repo.CommitMeta (CommitMeta, commitMetaCodec)
+import           ATProto.XRPC.Client     (XrpcClient (..))
+import           ATProto.XRPC.Types      (XrpcError (..), XrpcMethod (..), XrpcRequest (..), XrpcResponse (..))
 
 -- ---------------------------------------------------------------------------
 -- Request
@@ -69,6 +70,8 @@ data PutRecordResponse = PutRecordResponse
     -- ^ AT-URI of the written record.
   , prCid :: T.Text
     -- ^ CID of the written record.
+  , prCommit :: CommitMeta
+    -- ^ Commit metadata
   } deriving (Eq, Show)
 
 -- | Codec for the @putRecord@ response body.
@@ -76,8 +79,9 @@ putRecordResponseCodec :: Codec PutRecordResponse
 putRecordResponseCodec =
     Codec.record "com.atproto.repo.putRecord#response" $
         PutRecordResponse
-            <$> Codec.requiredField "uri" Codec.atUri prUri
-            <*> Codec.requiredField "cid" Codec.text  prCid
+            <$> Codec.requiredField "uri"    Codec.atUri     prUri
+            <*> Codec.requiredField "cid"    Codec.text      prCid
+            <*> Codec.requiredField "commit" commitMetaCodec prCommit
 
 -- ---------------------------------------------------------------------------
 -- Client function
