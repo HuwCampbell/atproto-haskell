@@ -6,6 +6,9 @@ module ATProto.XRPC.Server.Types
   , XrpcHandlerResult (..)
     -- * Handler
   , XrpcHandler
+    -- * Authentication
+  , AuthResult (..)
+  , AuthVerifier
     -- * Endpoint
   , XrpcEndpoint (..)
     -- * Server
@@ -29,6 +32,10 @@ data XrpcServerRequest = XrpcServerRequest
     -- ^ Raw request body (present for procedures, absent for queries).
   , xsrHeaders :: XrpcHeaders
     -- ^ Request headers as a case-insensitive map.
+  , xsrCaller  :: Maybe T.Text
+    -- ^ DID of the authenticated caller, populated by the server's
+    -- 'AuthVerifier' if one is configured.  'Nothing' means either no
+    -- verifier is configured or the verifier indicated anonymous access.
   }
 
 -- | What a handler returns.
@@ -48,6 +55,37 @@ data XrpcHandlerResult
 -- to perform IO operations.
 type XrpcHandler m = XrpcServerRequest -> m XrpcHandlerResult
 
+-- | The result of running an 'AuthVerifier'.
+data AuthResult
+  = AuthOk (Maybe T.Text)
+    -- ^ Authentication succeeded (or the endpoint is public).
+    -- The 'T.Text' value, when present, is the caller's DID.
+    -- 'Nothing' indicates anonymous access; the request will proceed
+    -- with 'xsrCaller' set to 'Nothing'.
+  | AuthFailed T.Text (Maybe T.Text)
+    -- ^ Authentication failed.  The middleware returns HTTP 401 with
+    -- @{\"error\":\"...\",\"message\":\"...\"}@ and the handler is never called.
+    -- The first field is the machine-readable error token
+    -- (e.g. @\"AuthRequired\"@); the second is an optional human-readable
+    -- message.
+
+-- | An authentication verifier for an XRPC server.
+--
+-- Receives the request headers (including the @Authorization@ header)
+-- and returns an 'AuthResult'.  The verifier runs in the application
+-- monad @m@, so it can read environment values, call IO, or consult a
+-- key cache.
+--
+-- Plug in any authentication scheme:
+--
+-- * Service-to-service JWTs via 'ATProto.ServiceAuth.verifyServiceJwt'
+-- * OAuth DPoP bearer tokens via 'ATProto.OAuth.Client'
+-- * A custom @Basic@ / API-key verifier for admin endpoints
+--
+-- See 'ATProto.XRPC.Server.withAuthVerifier' for how to attach a
+-- verifier to an 'XrpcServer'.
+type AuthVerifier m = XrpcHeaders -> m AuthResult
+
 -- | Registration of one XRPC endpoint.
 data XrpcEndpoint m = XrpcEndpoint
   { xeNsid    :: NSID
@@ -59,7 +97,13 @@ data XrpcEndpoint m = XrpcEndpoint
   }
 
 -- | A collection of registered XRPC endpoints, keyed by method and NSID.
-newtype XrpcServer m = XrpcServer
-  { xsEndpoints :: Map.Map (XrpcMethod, NSID) (XrpcEndpoint m)
+data XrpcServer m = XrpcServer
+  { xsEndpoints    :: Map.Map (XrpcMethod, NSID) (XrpcEndpoint m)
     -- ^ Internal routing table.  Build with 'ATProto.XRPC.Server.makeServer'.
+  , xsAuthVerifier :: Maybe (AuthVerifier m)
+    -- ^ Optional authentication verifier.  When present, the middleware
+    -- runs it on every request before calling the handler.  On 'AuthFailed'
+    -- the middleware returns HTTP 401 immediately.  On 'AuthOk' the caller
+    -- DID (if any) is injected into 'xsrCaller'.
+    -- Attach one with 'ATProto.XRPC.Server.withAuthVerifier'.
   }

@@ -201,11 +201,20 @@ HTTP routing rules match the reference:
 Error responses are serialised as {\"error\":\"...\",\"message\":\"...\"}
 with Content-Type: application/json without an aeson dependency.
 
-The reference @atproto/xrpc-server package additionally provides
+An AuthVerifier hook is provided for authentication.  Attach any
+MonadIO-compatible verifier with withAuthVerifier; the middleware runs
+it before every handler dispatch and returns HTTP 401 on AuthFailed.
+On success the caller's DID is available as xsrCaller in the request.
+Built-in auth schemes supported out of the box (by composing with other
+packages):
+  - Service-to-service JWTs via ATProto.ServiceAuth.verifyServiceJwt
+  - OAuth DPoP bearer tokens via ATProto.OAuth.Client
+  - Any custom Basic / API-key scheme
+
 Lexicon-typed input validation (checking that request parameters and
-bodies conform to a schema) and auth-verifier integration.  Neither is
-implemented here; both are deferred to higher-level packages once
-atproto-haskell-lexicon gains a schema-validation layer.
+bodies conform to a schema) is not implemented here; it is deferred to
+a higher-level package once atproto-haskell-lexicon gains a
+schema-validation layer.
 
 
 atproto-haskell-repo  (portions of @atproto/api)
@@ -490,7 +499,7 @@ and assesses readiness.
 | account-manager/ — account DB, email verification, sessions | None | Missing |
 | actor-store/ — per-actor repo storage | None | Missing |
 | api/ — XRPC handlers for com.atproto.* | atproto-repo covers listRecords, putRecord, deleteRecord, uploadBlob, getBlob; createRecord, getRecord, describeRepo absent | Partial |
-| auth-verifier.ts — JWT/OAuth token verification | atproto-service-auth (service-to-service); atproto-oauth (client-side) | Partial (no server-side OAuth provider) |
+| auth-verifier.ts — JWT/OAuth token verification | atproto-service-auth (service-to-service); atproto-oauth (client-side); atproto-xrpc-server AuthVerifier hook wires them to XRPC handlers | Partial (no server-side OAuth provider) |
 | auth-routes.ts / auth-scope.ts — OAuth provider routes | None | Missing |
 | sequencer/ — outbound event sequencer (firehose emitter) | atproto-firehose covers the consumer side | Missing (producer side) |
 | did-cache/ — persisted DID document cache | None | Missing |
@@ -509,8 +518,11 @@ follows.
 
 XRPC server framework.  atproto-haskell-xrpc-server provides a WAI
 Middleware for routing /xrpc/<nsid> paths to MonadIO handlers with
-correct error serialisation.  Lexicon-typed input validation and
-auth-verifier integration remain as future additions once
+correct error serialisation and an AuthVerifier hook.  Applications
+wire in verifyServiceJwt (service-to-service) or an OAuth token
+verifier via withAuthVerifier; the middleware enforces it before every
+handler call and injects the caller DID into xsrCaller.  Lexicon-typed
+input validation is deferred to a higher-level package once
 atproto-haskell-lexicon gains a schema-validation layer.
 
 MST write path.  The atproto-mst package supports reads, leaf

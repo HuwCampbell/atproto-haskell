@@ -38,7 +38,6 @@
 -- import ATProto.Syntax             (parseNSID)
 -- import Network.Wai.Handler.Warp   (run)
 --
--- -- Application environment
 -- data AppEnv = AppEnv
 --   { envConn     :: Connection
 --   , envSessions :: SessionMap
@@ -46,7 +45,6 @@
 --
 -- type AppM = ReaderT AppEnv IO
 --
--- -- Handler written naturally against the env
 -- handleGetStatuses :: XrpcServerRequest -> AppM XrpcHandlerResult
 -- handleGetStatuses _req = do
 --   conn <- asks envConn
@@ -59,7 +57,6 @@
 --     Nothing  -> return (XrpcHandlerError \"InvalidRequest\" (Just \"body required\"))
 --     Just _bs -> return XrpcAccepted
 --
--- -- Build the server once
 -- xrpcServer :: XrpcServer AppM
 -- xrpcServer =
 --   let Right getStatuses = parseNSID \"xyz.statusphere.getStatuses\"
@@ -69,21 +66,76 @@
 --       , procedure setStatus   handleSetStatus
 --       ]
 --
--- -- Wire up: runner is supplied once in main
 -- main :: IO ()
 -- main = do
 --   env <- buildEnv
 --   run 3001 (xrpcMiddleware (flip runReaderT env) xrpcServer fallbackApp)
+-- @
+--
+-- == Adding authentication
+--
+-- Attach an 'AuthVerifier' to the server with 'withAuthVerifier'.  The
+-- verifier runs before every handler dispatch; on success the caller\'s
+-- DID (if any) is available as 'xsrCaller'.
+--
+-- === Service-to-service JWT authentication
+--
+-- Use 'ATProto.ServiceAuth.verifyServiceJwt' from @atproto-haskell-service-auth@:
+--
+-- @
+-- import qualified Data.CaseInsensitive       as CI
+-- import qualified Data.Map.Strict            as Map
+-- import           ATProto.ServiceAuth        (ServiceAuthError, verifyServiceJwt)
+-- import           ATProto.XRPC.Server
+--
+-- -- Build an AuthVerifier that validates service-auth JWTs.
+-- -- @myDid@ is this server\'s own DID (the expected audience).
+-- -- @lookupKey iss refresh@ returns the public key for the issuer DID.
+-- serviceAuthVerifier :: Text -> (Text -> Bool -> IO (Either String PubKey)) -> AuthVerifier IO
+-- serviceAuthVerifier myDid lookupKey headers =
+--   case Map.lookup (CI.mk \"authorization\") headers of
+--     Nothing ->
+--       return (AuthFailed \"AuthRequired\" (Just \"Authorization header missing\"))
+--     Just authVal ->
+--       case T.stripPrefix \"Bearer \" authVal of
+--         Nothing ->
+--           return (AuthFailed \"AuthRequired\" (Just \"Expected Bearer token\"))
+--         Just jwt -> do
+--           result <- verifyServiceJwt jwt (Just myDid) Nothing lookupKey
+--           return \$ case result of
+--             Left err  -> AuthFailed \"AuthRequired\" (Just (T.pack (show err)))
+--             Right pay -> AuthOk (Just (payloadIss pay))
+--
+-- -- Attach to the server
+-- secureServer :: XrpcServer IO
+-- secureServer =
+--   withAuthVerifier (serviceAuthVerifier myDid lookupKey)
+--     (makeServer [ query nsid myHandler ])
+-- @
+--
+-- === Reading the caller DID in a handler
+--
+-- @
+-- protectedHandler :: XrpcServerRequest -> AppM XrpcHandlerResult
+-- protectedHandler req =
+--   case xsrCaller req of
+--     Nothing  -> return (XrpcHandlerError \"AuthRequired\" (Just \"Login required\"))
+--     Just did -> do
+--       -- use did as the authenticated caller\'s DID
+--       return (XrpcSuccess (encode did))
 -- @
 module ATProto.XRPC.Server
   ( -- * Smart constructors
     query
   , procedure
   , makeServer
+  , withAuthVerifier
     -- * Re-exports from 'ATProto.XRPC.Server.Types'
   , XrpcServerRequest (..)
   , XrpcHandlerResult (..)
   , XrpcHandler
+  , AuthResult (..)
+  , AuthVerifier
   , XrpcEndpoint (..)
   , XrpcServer (..)
   ) where
@@ -102,9 +154,28 @@ query nsid handler = XrpcEndpoint nsid XrpcQuery handler
 procedure :: NSID -> XrpcHandler m -> XrpcEndpoint m
 procedure nsid handler = XrpcEndpoint nsid XrpcProcedure handler
 
--- | Build an 'XrpcServer' from a list of endpoints.
+-- | Build an 'XrpcServer' from a list of endpoints, with no auth verifier.
+--
+-- All endpoints are publicly accessible by default.  Use 'withAuthVerifier'
+-- to add authentication.
 --
 -- If two endpoints share the same NSID and method, the last one wins.
 makeServer :: [XrpcEndpoint m] -> XrpcServer m
-makeServer eps = XrpcServer $ Map.fromList
-  [ ((xeMethod ep, xeNsid ep), ep) | ep <- eps ]
+makeServer eps = XrpcServer
+  { xsEndpoints    = Map.fromList [ ((xeMethod ep, xeNsid ep), ep) | ep <- eps ]
+  , xsAuthVerifier = Nothing
+  }
+
+-- | Attach an 'AuthVerifier' to an 'XrpcServer'.
+--
+-- The verifier will be run on every request before the handler is
+-- dispatched.  On 'AuthFailed' the middleware returns HTTP 401 with an
+-- XRPC error body and the handler is never called.  On 'AuthOk' the
+-- caller\'s DID (if any) is injected into 'xsrCaller'.
+--
+-- @
+-- secureServer :: XrpcServer IO
+-- secureServer = withAuthVerifier myVerifier (makeServer myEndpoints)
+-- @
+withAuthVerifier :: AuthVerifier m -> XrpcServer m -> XrpcServer m
+withAuthVerifier v srv = srv { xsAuthVerifier = Just v }

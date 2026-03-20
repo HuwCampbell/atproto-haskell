@@ -24,7 +24,6 @@ import           Network.Wai
 import           ATProto.Syntax.NSID        (NSID, nsidSegments, parseNSID)
 import           ATProto.XRPC.Types         (XrpcHeaders, XrpcMethod (..))
 import           ATProto.XRPC.Server.Types
-
 -- | Build a WAI 'Middleware' from an 'XrpcServer'.
 --
 -- Intercepts requests whose path matches @\/xrpc\/<nsid>@, dispatches to
@@ -69,9 +68,17 @@ xrpcMiddleware runner server nextApp req respond =
                               then fmap Just (strictRequestBody req)
                               else return Nothing
                       let hdrs = buildHeaders req
-                          xreq = XrpcServerRequest nsid params body hdrs
-                      result <- runner (xeHandler endpoint xreq)
-                      respond (resultToResponse result)
+                      -- Run auth verifier (if configured) before calling the handler.
+                      authResult <- case xsAuthVerifier server of
+                        Nothing -> return (AuthOk Nothing)
+                        Just v  -> runner (v hdrs)
+                      case authResult of
+                        AuthFailed code msg ->
+                          respond (unauthorizedResponse code msg)
+                        AuthOk caller -> do
+                          let xreq = XrpcServerRequest nsid params body hdrs caller
+                          result <- runner (xeHandler endpoint xreq)
+                          respond (resultToResponse result)
                     Nothing ->
                       let otherMethod = case xrpcMethod of
                             XrpcQuery     -> XrpcProcedure
@@ -107,6 +114,10 @@ xrpcApplication runner server =
 errorResponse :: Status -> T.Text -> Maybe T.Text -> Response
 errorResponse st code msg =
   responseLBS st [(hContentType, "application/json")] (buildErrorJson code msg)
+
+-- | Build an HTTP 401 Unauthorized 'Response' for auth failures.
+unauthorizedResponse :: T.Text -> Maybe T.Text -> Response
+unauthorizedResponse = errorResponse status401
 
 -- | Serialise an 'XrpcHandlerResult' to a WAI 'Response'.
 resultToResponse :: XrpcHandlerResult -> Response
