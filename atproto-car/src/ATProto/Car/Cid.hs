@@ -17,6 +17,7 @@ module ATProto.Car.Cid
   , parseCidFromBytes
     -- * Display
   , cidToText
+  , textToCidBytes
   ) where
 
 import           Data.Bits  (shiftR, shiftL, (.|.), (.&.))
@@ -113,3 +114,38 @@ encodeBase32Lower bs = go (BS.unpack bs) 0 0
               nibble = (acc `shiftR` held') .&. 0x1F
           in b32 nibble : emit acc held' ws
       | otherwise = go ws held acc
+
+-- | Parse a multibase base32lower CID string back to 'CidBytes'.
+--
+-- The string must start with @\'b\'@ (multibase base32lower prefix) followed
+-- by base32lower-encoded bytes (alphabet @a-z2-7@, no padding).
+textToCidBytes :: T.Text -> Either String CidBytes
+textToCidBytes t = case T.uncons t of
+  Nothing       -> Left "textToCidBytes: empty string"
+  Just ('b', r) -> fmap CidBytes (decodeBase32Lower (T.unpack r))
+  Just (c, _)   -> Left ("textToCidBytes: unknown multibase prefix " ++ show c)
+
+-- | Decode a base32lower string (alphabet @a-z2-7@, no padding) to bytes.
+decodeBase32Lower :: String -> Either String BS.ByteString
+decodeBase32Lower s = do
+  vals <- mapM charToVal s
+  Right (BS.pack (collect vals 0 0))
+  where
+    charToVal :: Char -> Either String Int
+    charToVal c
+      | c >= 'a' && c <= 'z' = Right (fromEnum c - fromEnum 'a')
+      | c >= '2' && c <= '7' = Right (fromEnum c - fromEnum '2' + 26)
+      | otherwise             = Left ("decodeBase32Lower: invalid character " ++ show c)
+
+    -- Accumulate 5-bit groups into bytes.  As per RFC 4648 §3.3 the final
+    -- partial group of less than 8 bits is simply discarded (no padding).
+    collect :: [Int] -> Int -> Int -> [Word8]
+    collect []     _    _   = []
+    collect (v:vs) held acc =
+      let acc'  = (acc `shiftL` 5) .|. v
+          held' = held + 5
+      in if held' >= 8
+           then let held'' = held' - 8
+                    byte   = fromIntegral ((acc' `shiftR` held'') .&. 0xFF)
+                in byte : collect vs held'' acc'
+           else collect vs held' acc'
