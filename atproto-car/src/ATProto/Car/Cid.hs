@@ -137,7 +137,8 @@ decodeBase32Lower s = do
       | c >= '2' && c <= '7' = Right (fromEnum c - fromEnum '2' + 26)
       | otherwise             = Left ("decodeBase32Lower: invalid character " ++ show c)
 
-    -- Accumulate 5-bit groups into bytes, discarding incomplete trailing bits.
+    -- Accumulate 5-bit groups into bytes.  As per RFC 4648 §3.3 the final
+    -- partial group of less than 8 bits is simply discarded (no padding).
     collect :: [Int] -> Int -> Int -> [Word8]
     collect []     _    _   = []
     collect (v:vs) held acc =

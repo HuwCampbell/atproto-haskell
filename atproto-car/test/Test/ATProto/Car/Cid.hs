@@ -5,17 +5,44 @@ import qualified Hedgehog.Gen   as Gen
 import qualified Hedgehog.Range as Range
 import qualified Data.ByteString as BS
 import qualified Data.Text       as T
+import           Data.Bits       (shiftR, (.|.))
+import           Data.Word       (Word8)
 
 import ATProto.Car.Cid
 
 -- ---------------------------------------------------------------------------
--- Helpers
+-- Generator
 -- ---------------------------------------------------------------------------
 
--- | Minimal valid dag-cbor sha2-256 CID bytes:
---   [0x01, 0x71, 0x12, 0x20] ++ 32 zero bytes
-minimalCidBytes :: BS.ByteString
-minimalCidBytes = BS.pack ([0x01, 0x71, 0x12, 0x20] ++ replicate 32 0x00)
+-- | Encode a non-negative integer as an unsigned LEB-128 varint.
+encodeVarint :: Int -> [Word8]
+encodeVarint n
+  | n < 0x80  = [fromIntegral n]
+  | otherwise = fromIntegral (n .|. 0x80) : encodeVarint (n `shiftR` 7)
+
+-- | Generator for structurally valid CIDv1 bytes.
+--
+-- Produces a CIDv1 with:
+--   * version = 1
+--   * a codec from a small set of known multicodec codes (raw, dag-cbor)
+--   * a hash-function code from known multihash codes
+--     (sha2-256 0x12, sha2-512 0x14, keccak-256 0x1b)
+--   * a random digest of 1–64 bytes
+genCidBytes :: Gen CidBytes
+genCidBytes = do
+  codec  <- Gen.element [0x55, 0x71]        -- 0x55 = raw, 0x71 = dag-cbor
+  hfCode <- Gen.element [0x12, 0x14, 0x1b]  -- 0x12 = sha2-256, 0x14 = sha2-512, 0x1b = keccak-256
+  dLen   <- Gen.int (Range.linear 1 64)
+  digest <- Gen.bytes (Range.singleton dLen)
+  let header = BS.pack ([0x01]
+                        ++ encodeVarint codec
+                        ++ encodeVarint hfCode
+                        ++ encodeVarint dLen)
+  pure (CidBytes (header <> digest))
+
+-- ---------------------------------------------------------------------------
+-- Fixtures
+-- ---------------------------------------------------------------------------
 
 -- | Known CID bytes from Test.ATProto.Car.Parser
 knownCidBytes :: BS.ByteString
@@ -31,62 +58,74 @@ knownCidBytes = BS.pack
 -- Properties
 -- ---------------------------------------------------------------------------
 
--- | Parsing known-good CID bytes succeeds and consumes exactly 36 bytes.
-prop_parseKnownCid :: Property
-prop_parseKnownCid = property $ do
-  case parseCidFromBytes minimalCidBytes 0 of
+-- | Any generated valid CIDv1 parses successfully and round-trips through
+-- 'parseCidFromBytes': the returned bytes equal the original input.
+prop_parseCidRoundtrip :: Property
+prop_parseCidRoundtrip = property $ do
+  cid <- forAll genCidBytes
+  let bs    = unCidBytes cid
+      total = BS.length bs
+  case parseCidFromBytes bs 0 of
     Left err       -> do
       annotate err
       failure
-    Right (cid, n) -> do
-      n === 36
-      unCidBytes cid === minimalCidBytes
+    Right (cid', n) -> do
+      n    === total
+      cid' === cid
 
--- | Parsing at non-zero offset works correctly.
+-- | Parsing at a non-zero offset works correctly: a random prefix is ignored
+-- and the CID bytes returned match the generated CID.
 prop_parseAtOffset :: Property
 prop_parseAtOffset = property $ do
+  cid    <- forAll genCidBytes
   prefix <- forAll $ Gen.bytes (Range.linear 1 8)
-  let bs = prefix <> minimalCidBytes
-  let off = BS.length prefix
+  let bs  = prefix <> unCidBytes cid
+      off = BS.length prefix
   case parseCidFromBytes bs off of
-    Left err       -> do
+    Left err        -> do
       annotate err
       failure
-    Right (cid, n) -> do
-      n === 36
-      unCidBytes cid === minimalCidBytes
+    Right (cid', n) -> do
+      n    === BS.length (unCidBytes cid)
+      cid' === cid
 
--- | Truncated input yields Left.
+-- | Truncating a generated CID to fewer bytes than its length yields Left.
 prop_truncated :: Property
 prop_truncated = property $ do
-  -- Take only 10 bytes of the 36-byte CID — digest will be incomplete.
-  let bs = BS.take 10 minimalCidBytes
-  case parseCidFromBytes bs 0 of
+  cid   <- forAll genCidBytes
+  let bs    = unCidBytes cid
+      total = BS.length bs
+  -- Keep strictly fewer bytes than the full CID (at least header, less digest).
+  keep  <- forAll $ Gen.int (Range.linear 0 (total - 1))
+  case parseCidFromBytes (BS.take keep bs) 0 of
     Left _  -> success
     Right _ -> failure
 
--- | cidToText produces a string starting with 'b' (multibase base32lower).
+-- | 'cidToText' always produces a string prefixed with @\'b\'@ (multibase
+-- base32lower), for any generated CID.
 prop_cidToTextPrefix :: Property
 prop_cidToTextPrefix = property $ do
-  let cid = CidBytes minimalCidBytes
-  let t   = cidToText cid
-  case T.uncons t of
+  cid <- forAll genCidBytes
+  case T.uncons (cidToText cid) of
     Just ('b', _) -> success
     _             -> failure
 
 -- | A version byte other than 1 is rejected.
 prop_badVersion :: Property
 prop_badVersion = property $ do
-  let bs = BS.cons 0x02 (BS.tail minimalCidBytes)
+  cid <- forAll genCidBytes
+  -- Overwrite the first byte (version) with something other than 0x01.
+  ver <- forAll $ Gen.word8 (Range.linear 0x02 0xFF)
+  let bs = BS.cons ver (BS.tail (unCidBytes cid))
   case parseCidFromBytes bs 0 of
     Left _  -> success
     Right _ -> failure
 
--- | cidToText followed by textToCidBytes is the identity on CidBytes.
+-- | 'cidToText' followed by 'textToCidBytes' is the identity on any generated
+-- valid CIDv1.
 prop_cidToTextRoundtrip :: Property
 prop_cidToTextRoundtrip = property $ do
-  bs <- forAll $ Gen.bytes (Range.linear 1 64)
-  let cid = CidBytes bs
+  cid <- forAll genCidBytes
   textToCidBytes (cidToText cid) === Right cid
 
 -- | textToCidBytes decodes the known CID string to the known bytes.
@@ -115,7 +154,7 @@ prop_textToCidBytesInvalidChar = property $ do
 
 tests :: Group
 tests = Group "ATProto.Car.Cid"
-  [ ("parse known CID bytes",                     prop_parseKnownCid)
+  [ ("parse/roundtrip: generated valid CID",      prop_parseCidRoundtrip)
   , ("parse at non-zero offset",                  prop_parseAtOffset)
   , ("truncated input yields Left",               prop_truncated)
   , ("cidToText starts with 'b'",                 prop_cidToTextPrefix)

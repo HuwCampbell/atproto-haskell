@@ -3,9 +3,8 @@ module Test.ATProto.Car.Parser (tests) where
 import Hedgehog
 import qualified Data.ByteString as BS
 import qualified Data.Map.Strict as Map
-import qualified Data.Text       as T
 
-import ATProto.Car.Cid    (CidBytes (..), parseCidFromBytes, cidToText)
+import ATProto.Car.Cid    (CidBytes (..), cidToText)
 import ATProto.Car.Parser
 
 -- ---------------------------------------------------------------------------
