@@ -1,0 +1,39 @@
+cabal-version:      3.0
+name:               atproto-haskell-xrpc-server
+version:            0.1.0.0
+synopsis:           AT Protocol XRPC server framework (WAI middleware)
+description:
+  WAI 'Middleware' abstraction for serving AT Protocol XRPC endpoints.
+  Provides routing by NSID, error serialisation, and a handler monad
+  parametric over any 'MonadIO' stack.
+license:            MIT
+license-file:       LICENSE
+author:             Huw Campbell
+maintainer:         huw.campbell@gmail.com
+category:           Network
+build-type:         Simple
+extra-doc-files:    CHANGELOG.md
+
+common warnings
+  ghc-options: -Wall
+
+library
+  import:           warnings
+  exposed-modules:
+      ATProto.XRPC.Server
+      ATProto.XRPC.Server.Types
+      ATProto.XRPC.Server.Wai
+  build-depends:
+      base          >= 4.14 && < 5
+    , bytestring    >= 0.10 && < 0.13
+    , case-insensitive
+    , containers    >= 0.6  && < 0.9
+    , text          >= 1.2  && < 2.2
+    , transformers  >= 0.5  && < 0.7
+    , http-types    >= 0.12 && < 0.13
+    , wai           >= 3.2  && < 3.3
+    , atproto-haskell-xrpc
+    , atproto-haskell-syntax
+  hs-source-dirs:   src
+  default-language: Haskell2010
+  default-extensions: OverloadedStrings
