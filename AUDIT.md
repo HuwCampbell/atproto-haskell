@@ -167,6 +167,56 @@ forwards all headers unchanged.  This matches the reference approach of
 accepting headers as a parameter rather than storing them in the client.
 
 
+atproto-haskell-xrpc-server  (@atproto/xrpc-server)
+----------------------------------------------------
+
+The package provides a WAI Middleware abstraction for serving XRPC
+endpoints, the server-side counterpart to atproto-haskell-xrpc and
+atproto-haskell-xrpc-http.
+
+Handlers are parametric in the application monad m (constrained to
+MonadIO).  This lets users write handlers in ReaderT AppEnv IO or any
+other MonadIO stack and supply a runner once at the WAI boundary, rather
+than threading environment values through every handler.  The pattern is
+analogous to hoistServer in Servant.
+
+The XrpcServer routing table is keyed by (XrpcMethod, NSID) and built
+with makeServer from a list of XrpcEndpoint values registered via the
+query and procedure smart constructors.
+
+xrpcMiddleware intercepts /xrpc/<nsid> paths, parses and validates the
+NSID, dispatches to the matching handler, and serialises results.
+Unknown paths fall through to the next WAI Application.  xrpcApplication
+wraps the middleware into a standalone Application that returns 404 for
+non-XRPC paths.
+
+HTTP routing rules match the reference:
+  - Invalid NSID in path          → 400 InvalidNSID
+  - Valid NSID, wrong HTTP method  → 405 MethodNotAllowed
+  - Valid NSID, no handler         → 501 MethodNotImplemented
+  - Successful handler result      → 200 with JSON body
+  - XrpcAccepted                   → 202, no body
+  - XrpcHandlerError               → 400 with {error, message} body
+
+Error responses are serialised as {\"error\":\"...\",\"message\":\"...\"}
+with Content-Type: application/json without an aeson dependency.
+
+An AuthVerifier hook is provided for authentication.  Attach any
+MonadIO-compatible verifier with withAuthVerifier; the middleware runs
+it before every handler dispatch and returns HTTP 401 on AuthFailed.
+On success the caller's DID is available as xsrCaller in the request.
+Built-in auth schemes supported out of the box (by composing with other
+packages):
+  - Service-to-service JWTs via ATProto.ServiceAuth.verifyServiceJwt
+  - OAuth DPoP bearer tokens via ATProto.OAuth.Client
+  - Any custom Basic / API-key scheme
+
+Lexicon-typed input validation (checking that request parameters and
+bodies conform to a schema) is not implemented here; it is deferred to
+a higher-level package once atproto-haskell-lexicon gains a
+schema-validation layer.
+
+
 atproto-haskell-repo  (portions of @atproto/api)
 --------------------------------------------------
 
@@ -449,7 +499,7 @@ and assesses readiness.
 | account-manager/ — account DB, email verification, sessions | None | Missing |
 | actor-store/ — per-actor repo storage | None | Missing |
 | api/ — XRPC handlers for com.atproto.* | atproto-repo covers listRecords, putRecord, deleteRecord, uploadBlob, getBlob; createRecord, getRecord, describeRepo absent | Partial |
-| auth-verifier.ts — JWT/OAuth token verification | atproto-service-auth (service-to-service); atproto-oauth (client-side) | Partial (no server-side OAuth provider) |
+| auth-verifier.ts — JWT/OAuth token verification | atproto-service-auth (service-to-service); atproto-oauth (client-side); atproto-xrpc-server AuthVerifier hook wires them to XRPC handlers | Partial (no server-side OAuth provider) |
 | auth-routes.ts / auth-scope.ts — OAuth provider routes | None | Missing |
 | sequencer/ — outbound event sequencer (firehose emitter) | atproto-firehose covers the consumer side | Missing (producer side) |
 | did-cache/ — persisted DID document cache | None | Missing |
@@ -461,18 +511,19 @@ and assesses readiness.
 | well-known.ts — .well-known/atproto-did and did.json serving | None | Missing (trivial, application concern) |
 | crawlers.ts — notifying relays of new commits | None | Missing |
 | pipethrough.ts — proxying unimplemented queries to AppView | atproto-xrpc-http | Possible |
-| XRPC server framework | None | Missing — atproto-xrpc is client-only; no equivalent of packages/xrpc-server |
+| XRPC server framework | atproto-xrpc-server: WAI Middleware routing NSID paths, serialising errors, parametric handler monad | Present |
 
 The most significant missing pieces for a PDS implementation are as
 follows.
 
-XRPC server framework.  The atproto-xrpc and atproto-xrpc-http packages
-are client-only.  There is no server-side equivalent of the TypeScript
-packages/xrpc-server package, which provides middleware for validating
-Lexicon-typed requests, routing NSID paths, and returning typed
-responses.  Building a PDS would require either a direct Warp/WAI
-handler (as the statusphere-spa example demonstrates for custom
-namespaces) or a dedicated server framework.
+XRPC server framework.  atproto-haskell-xrpc-server provides a WAI
+Middleware for routing /xrpc/<nsid> paths to MonadIO handlers with
+correct error serialisation and an AuthVerifier hook.  Applications
+wire in verifyServiceJwt (service-to-service) or an OAuth token
+verifier via withAuthVerifier; the middleware enforces it before every
+handler call and injects the caller DID into xsrCaller.  Lexicon-typed
+input validation is deferred to a higher-level package once
+atproto-haskell-lexicon gains a schema-validation layer.
 
 MST write path.  The atproto-mst package supports reads, leaf
 enumeration, diffs, and proof verification, but does not support

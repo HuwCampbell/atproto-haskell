@@ -15,6 +15,7 @@ packages:
   atproto-syntax/
   atproto-tap/
   atproto-xrpc-http/
+  atproto-xrpc-server/
   atproto-xrpc/
   examples/oauth-cli/
   examples/statusphere-og/
