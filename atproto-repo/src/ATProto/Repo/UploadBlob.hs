@@ -26,8 +26,8 @@ import           ATProto.Ipld.Value      (BlobRef)
 import           ATProto.Lex.Codec       (Codec)
 import qualified ATProto.Lex.Codec       as Codec
 import qualified ATProto.Lex.Json        as LexJson
-import           ATProto.XRPC.Client (XrpcClient (..))
-import           ATProto.XRPC.Types  (XrpcError (..), XrpcMethod (..), XrpcRequest (..), XrpcResponse (..))
+import           ATProto.XRPC.Client     (XrpcClient (..))
+import           ATProto.XRPC.Types      (XrpcError (..), XrpcMethod (..), XrpcRequest (..), XrpcResponse (..))
 
 -- ---------------------------------------------------------------------------
 -- Request
@@ -37,7 +37,7 @@ import           ATProto.XRPC.Types  (XrpcError (..), XrpcMethod (..), XrpcReque
 data UploadBlobRequest = UploadBlobRequest
   { ubrBody     :: BL.ByteString
     -- ^ Raw binary content of the blob.
-  , ubrMimeType :: T.Text
+  , ubrMimeType :: Maybe T.Text
     -- ^ MIME type, e.g. @\"image\/jpeg\"@.
   } deriving (Eq, Show)
 
@@ -80,7 +80,7 @@ uploadBlob client req = do
     , xrpcReqNsid    = "com.atproto.repo.uploadBlob"
     , xrpcReqParams  = Map.empty
     , xrpcReqBody    = Just (ubrBody req)
-    , xrpcReqHeaders = Map.singleton "Content-Type" (ubrMimeType req)
+    , xrpcReqHeaders = maybe Map.empty (Map.singleton "Content-Type") (ubrMimeType req)
     }
   case result of
     Left  err  -> return (Left err)

@@ -43,7 +43,7 @@ xrpcMiddleware
   => (forall a. m a -> IO a)
   -- ^ Runner: how to execute the application monad in 'IO'.
   -- Supplied once at the WAI boundary, e.g. @'flip' 'Control.Monad.Trans.Reader.runReaderT' env@.
-  -> XrpcServer m
+  -> XrpcServer m did
   -> Middleware
 xrpcMiddleware runner server nextApp req respond =
   case pathInfo req of
@@ -98,7 +98,7 @@ xrpcMiddleware runner server nextApp req respond =
 xrpcApplication
   :: MonadIO m
   => (forall a. m a -> IO a)
-  -> XrpcServer m
+  -> XrpcServer m did
   -> Application
 xrpcApplication runner server =
   xrpcMiddleware runner server notFoundApp

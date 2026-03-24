@@ -23,7 +23,7 @@ import ATProto.Syntax.NSID  (NSID)
 import ATProto.XRPC.Types   (XrpcHeaders, XrpcMethod)
 
 -- | A parsed, routable XRPC server request.
-data XrpcServerRequest = XrpcServerRequest
+data XrpcServerRequest did = XrpcServerRequest
   { xsrNsid    :: NSID
     -- ^ Validated NSID extracted from the request path.
   , xsrParams  :: Map.Map T.Text T.Text
@@ -32,7 +32,7 @@ data XrpcServerRequest = XrpcServerRequest
     -- ^ Raw request body (present for procedures, absent for queries).
   , xsrHeaders :: XrpcHeaders
     -- ^ Request headers as a case-insensitive map.
-  , xsrCaller  :: Maybe T.Text
+  , xsrCaller  :: Maybe did
     -- ^ DID of the authenticated caller, populated by the server's
     -- 'AuthVerifier' if one is configured.  'Nothing' means either no
     -- verifier is configured or the verifier indicated anonymous access.
@@ -53,11 +53,11 @@ data XrpcHandlerResult
 --
 -- The handler runs in the application monad @m@.  Use 'Control.Monad.IO.Class.liftIO'
 -- to perform IO operations.
-type XrpcHandler m = XrpcServerRequest -> m XrpcHandlerResult
+type XrpcHandler m did = XrpcServerRequest did -> m XrpcHandlerResult
 
 -- | The result of running an 'AuthVerifier'.
-data AuthResult
-  = AuthOk (Maybe T.Text)
+data AuthResult a
+  = AuthOk (Maybe a)
     -- ^ Authentication succeeded (or the endpoint is public).
     -- The 'T.Text' value, when present, is the caller's DID.
     -- 'Nothing' indicates anonymous access; the request will proceed
@@ -84,23 +84,23 @@ data AuthResult
 --
 -- See 'ATProto.XRPC.Server.withAuthVerifier' for how to attach a
 -- verifier to an 'XrpcServer'.
-type AuthVerifier m = XrpcHeaders -> m AuthResult
+type AuthVerifier m a = XrpcHeaders -> m (AuthResult a)
 
 -- | Registration of one XRPC endpoint.
-data XrpcEndpoint m = XrpcEndpoint
+data XrpcEndpoint m did = XrpcEndpoint
   { xeNsid    :: NSID
     -- ^ The NSID this endpoint handles.
   , xeMethod  :: XrpcMethod
     -- ^ Whether this is a query (GET) or procedure (POST).
-  , xeHandler :: XrpcHandler m
+  , xeHandler :: XrpcHandler m did
     -- ^ The handler function.
   }
 
 -- | A collection of registered XRPC endpoints, keyed by method and NSID.
-data XrpcServer m = XrpcServer
-  { xsEndpoints    :: Map.Map (XrpcMethod, NSID) (XrpcEndpoint m)
+data XrpcServer m did = XrpcServer
+  { xsEndpoints    :: Map.Map (XrpcMethod, NSID) (XrpcEndpoint m did)
     -- ^ Internal routing table.  Build with 'ATProto.XRPC.Server.makeServer'.
-  , xsAuthVerifier :: Maybe (AuthVerifier m)
+  , xsAuthVerifier :: Maybe (AuthVerifier m did)
     -- ^ Optional authentication verifier.  When present, the middleware
     -- runs it on every request before calling the handler.  On 'AuthFailed'
     -- the middleware returns HTTP 401 immediately.  On 'AuthOk' the caller

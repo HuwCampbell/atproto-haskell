@@ -147,12 +147,12 @@ import ATProto.XRPC.Types        (XrpcMethod (..))
 import ATProto.XRPC.Server.Types
 
 -- | Register a query (HTTP GET) endpoint.
-query :: NSID -> XrpcHandler m -> XrpcEndpoint m
-query nsid handler = XrpcEndpoint nsid XrpcQuery handler
+query :: NSID -> XrpcHandler m did -> XrpcEndpoint m did
+query nsid = XrpcEndpoint nsid XrpcQuery
 
 -- | Register a procedure (HTTP POST) endpoint.
-procedure :: NSID -> XrpcHandler m -> XrpcEndpoint m
-procedure nsid handler = XrpcEndpoint nsid XrpcProcedure handler
+procedure :: NSID -> XrpcHandler m did -> XrpcEndpoint m did
+procedure nsid = XrpcEndpoint nsid XrpcProcedure
 
 -- | Build an 'XrpcServer' from a list of endpoints, with no auth verifier.
 --
@@ -160,7 +160,7 @@ procedure nsid handler = XrpcEndpoint nsid XrpcProcedure handler
 -- to add authentication.
 --
 -- If two endpoints share the same NSID and method, the last one wins.
-makeServer :: [XrpcEndpoint m] -> XrpcServer m
+makeServer :: [XrpcEndpoint m did] -> XrpcServer m did
 makeServer eps = XrpcServer
   { xsEndpoints    = Map.fromList [ ((xeMethod ep, xeNsid ep), ep) | ep <- eps ]
   , xsAuthVerifier = Nothing
@@ -177,5 +177,5 @@ makeServer eps = XrpcServer
 -- secureServer :: XrpcServer IO
 -- secureServer = withAuthVerifier myVerifier (makeServer myEndpoints)
 -- @
-withAuthVerifier :: AuthVerifier m -> XrpcServer m -> XrpcServer m
+withAuthVerifier :: AuthVerifier m did -> XrpcServer m did -> XrpcServer m did
 withAuthVerifier v srv = srv { xsAuthVerifier = Just v }
