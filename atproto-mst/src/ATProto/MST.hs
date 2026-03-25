@@ -4,8 +4,12 @@ module ATProto.MST
     module ATProto.MST.Types
     -- * Node format
   , module ATProto.MST.Node
+    -- * Node encoding
+  , module ATProto.MST.Encode
     -- * Layer computation
   , module ATProto.MST.Layer
+    -- * Tree construction
+  , module ATProto.MST.Build
     -- * Point lookup
   , module ATProto.MST.Get
     -- * Tree diff
@@ -16,7 +20,9 @@ module ATProto.MST
 
 import ATProto.MST.Types
 import ATProto.MST.Node
+import ATProto.MST.Encode
 import ATProto.MST.Layer
+import ATProto.MST.Build
 import ATProto.MST.Get
 import ATProto.MST.Diff
 import ATProto.MST.Verify
