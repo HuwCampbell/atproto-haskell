@@ -29,7 +29,7 @@ import ATProto.Car.Cid (CidBytes (..), parseCidFromBytes)
 data NodeData = NodeData
   { nodeLeft    :: Maybe CidBytes   -- ^ leftmost subtree CID, if any
   , nodeEntries :: [TreeEntry]      -- ^ ordered list of entries
-  } deriving (Show)
+  } deriving (Eq, Show)
 
 -- | A single entry in an MST node.
 data TreeEntry = TreeEntry
@@ -37,7 +37,7 @@ data TreeEntry = TreeEntry
   , teSuffix     :: BS.ByteString    -- ^ remaining key bytes after shared prefix
   , teValue      :: CidBytes         -- ^ CID of the leaf record
   , teRightTree  :: Maybe CidBytes   -- ^ optional right-subtree CID
-  } deriving (Show)
+  } deriving (Eq, Show)
 
 -- ---------------------------------------------------------------------------
 -- CBOR decoding
