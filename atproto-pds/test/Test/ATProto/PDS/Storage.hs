@@ -7,7 +7,8 @@ import qualified Hedgehog.Range as Range
 import qualified Data.ByteString as BS
 import qualified Data.Text       as T
 
-import System.Directory   (removeDirectoryRecursive, doesDirectoryExist)
+import System.Directory   (removeDirectoryRecursive, doesDirectoryExist,
+                           getTemporaryDirectory)
 import System.FilePath    ((</>))
 
 import ATProto.Car.Cid               (CidBytes (..))
@@ -37,11 +38,10 @@ testDID = case parseDID "did:plc:filetest" of
   Right d -> d
   Left  e -> error ("testDID: " ++ e)
 
-testDir :: FilePath
-testDir = "/tmp" </> "atproto-pds-test-filestore"
-
 setupFileStore :: IO (FileStore, PrivKey)
 setupFileStore = do
+  tmpDir <- getTemporaryDirectory
+  let testDir = tmpDir </> "atproto-pds-test-filestore"
   exists <- doesDirectoryExist testDir
   if exists then removeDirectoryRecursive testDir else return ()
   store <- newFileStore testDir
