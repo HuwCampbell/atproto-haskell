@@ -9,6 +9,7 @@ packages:
   atproto-lexicon/
   atproto-mst/
   atproto-oauth/
+  atproto-oauth-provider/
   atproto-repo-verify/
   atproto-repo/
   atproto-service-auth/
