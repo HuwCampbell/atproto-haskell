@@ -1,11 +1,12 @@
 cabal-version:      3.0
 name:               atproto-haskell-car
 version:            0.1.0.0
-synopsis:           AT Protocol CAR v1 file parser
+synopsis:           AT Protocol CAR v1 file parser and writer
 description:
-  Parser for Content Addressable aRchive (CAR) v1 files as used by the AT
-  Protocol relay firehose.  Provides binary CIDv1 parsing, a block-map type,
-  and a full CAR v1 decoder.
+  Parser and writer for Content Addressable aRchive (CAR) v1 files as used
+  by the AT Protocol relay firehose.  Provides binary CIDv1 parsing and
+  construction, shared DAG-CBOR tag-42 helpers, a block-map type, and full
+  CAR v1 read\/write support.
 license:            MIT
 license-file:       LICENSE
 author:             Huw Campbell
@@ -24,13 +25,17 @@ library
       ATProto.Car
       ATProto.Car.Cid
       ATProto.Car.BlockMap
+      ATProto.Car.DagCbor
       ATProto.Car.Parser
+      ATProto.Car.Writer
   build-depends:
       base        >= 4.14 && < 5
     , bytestring  >= 0.10 && < 0.13
     , containers  >= 0.6  && < 0.8
     , text        >= 1.2  && < 2.2
     , cborg       >= 0.2  && < 0.3
+    , crypton     >= 0.32 && < 1.2
+    , memory      >= 0.14 && < 0.19
   hs-source-dirs:   src
   default-language: Haskell2010
 
@@ -41,6 +46,7 @@ test-suite atproto-car-tests
   other-modules:
       Test.ATProto.Car.Cid
       Test.ATProto.Car.Parser
+      Test.ATProto.Car.Writer
   build-depends:
       base                  >= 4.14 && < 5
     , bytestring            >= 0.10 && < 0.13

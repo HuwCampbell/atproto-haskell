@@ -26,8 +26,8 @@ import qualified Data.Text            as T
 import qualified Codec.CBOR.Encoding  as E
 import qualified Codec.CBOR.Write     as W
 
-import ATProto.Car.Cid     (CidBytes (..))
-import ATProto.MST.Encode  (cidForDagCbor)
+import ATProto.Car.Cid     (CidBytes, cidForDagCbor)
+import ATProto.Car.DagCbor  (encodeCidTag42, encodeNullableCidTag42)
 import ATProto.Crypto.EC   (sign)
 import ATProto.Crypto.Types (PrivKey, Signature (..))
 
@@ -77,7 +77,7 @@ encodeUnsignedCommit did rev prev dataRoot =
     <> E.encodeString "data"
     <> encodeCidTag42 dataRoot
     <> E.encodeString "prev"
-    <> encodeMaybeCidTag42 prev
+    <> encodeNullableCidTag42 prev
     <> E.encodeString "version"
     <> E.encodeInt 3
 
@@ -104,20 +104,6 @@ encodeSignedCommit did rev sigBytes prev dataRoot =
     <> E.encodeString "data"
     <> encodeCidTag42 dataRoot
     <> E.encodeString "prev"
-    <> encodeMaybeCidTag42 prev
+    <> encodeNullableCidTag42 prev
     <> E.encodeString "version"
     <> E.encodeInt 3
-
--- ---------------------------------------------------------------------------
--- CID CBOR helpers
--- ---------------------------------------------------------------------------
-
--- | Encode a CID as CBOR tag 42 with a @0x00@ identity multibase prefix.
-encodeCidTag42 :: CidBytes -> E.Encoding
-encodeCidTag42 (CidBytes bs) =
-  E.encodeTag 42 <> E.encodeBytes (BS.cons 0x00 bs)
-
--- | Encode an optional CID: CBOR null for 'Nothing', tag 42 for 'Just'.
-encodeMaybeCidTag42 :: Maybe CidBytes -> E.Encoding
-encodeMaybeCidTag42 Nothing    = E.encodeNull
-encodeMaybeCidTag42 (Just cid) = encodeCidTag42 cid

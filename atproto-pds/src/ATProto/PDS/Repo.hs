@@ -46,11 +46,12 @@ import qualified Data.Text            as T
 import qualified Codec.CBOR.Decoding  as D
 import qualified Codec.CBOR.Read      as R
 
-import ATProto.Car.Cid      (CidBytes, parseCidFromBytes)
+import ATProto.Car.Cid      (CidBytes, cidForDagCbor)
 import ATProto.Car.BlockMap  (BlockMap)
+import ATProto.Car.DagCbor   (decodeCidTag42, skipValue)
 import ATProto.MST.Build     (buildMST)
 import ATProto.MST.Diff      (mstDiff, WriteDescr (..))
-import ATProto.MST.Encode    (cidForDagCbor, encodeNode)
+import ATProto.MST.Encode    (encodeNode)
 import ATProto.MST.Get       (get)
 import ATProto.MST.Node      (NodeData (..), TreeEntry (..), decodeNode)
 import ATProto.MST.Types     (MstError (..))
@@ -346,43 +347,8 @@ decodeCommitDataRoot bs = do
     findDataField n = do
       key <- D.decodeString
       if key == "data"
-        then decodeTag42
-        else skipField >> findDataField (n - 1)
-
-    decodeTag42 :: D.Decoder s CidBytes
-    decodeTag42 = do
-      tag <- D.decodeTag
-      if tag /= 42
-        then fail ("expected CBOR tag 42, got " ++ show tag)
-        else do
-          raw <- D.decodeBytes
-          let stripped = if not (BS.null raw) && BS.head raw == 0x00
-                           then BS.tail raw
-                           else raw
-          case parseCidFromBytes stripped 0 of
-            Left err       -> fail err
-            Right (cid, _) -> return cid
-
-    skipField :: D.Decoder s ()
-    skipField = do
-      ty <- D.peekTokenType
-      case ty of
-        D.TypeNull    -> D.decodeNull
-        D.TypeBool    -> D.decodeBool  >> return ()
-        D.TypeUInt    -> D.decodeWord  >> return ()
-        D.TypeNInt    -> D.decodeNegWord >> return ()
-        D.TypeBytes   -> D.decodeBytes >> return ()
-        D.TypeString  -> D.decodeString >> return ()
-        D.TypeListLen -> do
-          len <- D.decodeListLen
-          mapM_ (\_ -> skipField) [1..len]
-        D.TypeMapLen  -> do
-          len <- D.decodeMapLen
-          mapM_ (\_ -> D.decodeString >> skipField) [1..len]
-        D.TypeTag     -> do
-          _ <- D.decodeTag
-          skipField
-        _ -> fail ("skipField: unsupported token type " ++ show ty)
+        then decodeCidTag42
+        else skipValue >> findDataField (n - 1)
 
 -- | Collect all MST node blocks reachable from a root CID.
 --
