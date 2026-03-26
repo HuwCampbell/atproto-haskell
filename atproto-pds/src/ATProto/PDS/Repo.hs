@@ -252,8 +252,7 @@ applyWrites store did key ops = do
               -- Handle empty MST case.
               newDataRoot <- case mNewRoot of
                 Just root -> do
-                  mapM_ (\(c, bs) -> putBlock store c bs) (Map.toList newMstBlocks)
-                  return root
+                  root <$ Map.traverseWithKey (putBlock store) newMstBlocks
                 Nothing -> do
                   -- Empty MST: create an explicit empty node.
                   let emptyNode  = NodeData Nothing []

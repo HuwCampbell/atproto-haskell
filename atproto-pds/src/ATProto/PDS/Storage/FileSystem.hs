@@ -55,7 +55,7 @@ instance BlockStore FileStore where
       then Just <$> BS.readFile path
       else return Nothing
 
-  putBlock s cid bs = BS.writeFile (blockPath s cid) bs
+  putBlock s cid = BS.writeFile (blockPath s cid)
 
 blockPath :: FileStore -> CidBytes -> FilePath
 blockPath s cid = fsBlockDir s </> T.unpack (cidToText cid)
