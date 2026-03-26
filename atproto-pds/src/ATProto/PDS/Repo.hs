@@ -36,6 +36,9 @@ module ATProto.PDS.Repo
     -- * Batch writes
   , WriteOp (..)
   , applyWrites
+    -- * CAR import\/export
+  , exportRepoCar
+  , importRepoCar
   ) where
 
 import qualified Data.ByteString      as BS
@@ -49,6 +52,8 @@ import qualified Codec.CBOR.Read      as R
 import ATProto.Car.Cid      (CidBytes, cidForDagCbor)
 import ATProto.Car.BlockMap  (BlockMap)
 import ATProto.Car.DagCbor   (decodeCidTag42, skipValue)
+import ATProto.Car.Parser    (readCarWithRoot, CarError (..))
+import ATProto.Car.Writer    (writeCarWithRoot)
 import ATProto.MST.Build     (buildMST)
 import ATProto.MST.Diff      (mstDiff, WriteDescr (..))
 import ATProto.MST.Encode    (encodeNode)
@@ -396,3 +401,78 @@ loadRecord store (rkey, cid) = do
 mapMstError :: MstError -> PdsError
 mapMstError (MstNodeNotFound t) = PdsMstError ("node not found: " <> t)
 mapMstError (MstDecodeError t)  = PdsMstError ("decode error: " <> t)
+
+-- ---------------------------------------------------------------------------
+-- CAR import/export
+-- ---------------------------------------------------------------------------
+
+-- | Export the current state of a repository as a CAR v1 byte string.
+--
+-- The CAR contains the commit block as root, plus all MST node blocks
+-- and record blocks reachable from the commit's data root.
+--
+-- Returns the CAR bytes, or a 'PdsError' if the repository is not
+-- initialised or a required block is missing.
+exportRepoCar
+  :: (BlockStore s, RepoStore s)
+  => s
+  -> DID
+  -> IO (Either PdsError BS.ByteString)
+exportRepoCar store did = do
+  mHead <- getRepoHead store did
+  case mHead of
+    Nothing -> return (Left (PdsRepoNotFound (unDID did)))
+    Just commitCid -> do
+      mCommitBytes <- getBlock store commitCid
+      case mCommitBytes of
+        Nothing -> return (Left (PdsBlockNotFound (T.pack (show commitCid))))
+        Just commitBytes -> do
+          -- Decode the data root from the commit.
+          case decodeCommitDataRoot commitBytes of
+            Left err -> return (Left (PdsCommitDecodeError (T.pack err)))
+            Right dataRoot -> do
+              -- Collect all MST blocks.
+              mstBlocks <- collectMstBlocks store dataRoot
+              -- Collect record CIDs from the MST entries.
+              let recordCids = case mstDiff mstBlocks Nothing dataRoot of
+                    Left _   -> []
+                    Right ws -> map wdCid ws
+              -- Fetch record blocks.
+              recBlocks <- fmap Map.fromList . mapM (\c -> do
+                mb <- getBlock store c
+                return (c, maybe BS.empty id mb)) $ recordCids
+              -- Assemble the full block map: commit + MST + records.
+              let allBlocks = Map.insert commitCid commitBytes
+                            $ Map.union mstBlocks recBlocks
+              return (Right (writeCarWithRoot commitCid allBlocks))
+
+-- | Import a CAR v1 byte string into the block store.
+--
+-- All blocks from the CAR are stored.  The repository head is set to
+-- the CAR's single root CID (which should be a commit block).
+--
+-- This does /not/ verify signatures or MST integrity; the caller is
+-- responsible for validation if needed.
+importRepoCar
+  :: (BlockStore s, RepoStore s)
+  => s
+  -> DID
+  -> BS.ByteString    -- ^ CAR bytes
+  -> IO (Either PdsError CidBytes)
+importRepoCar store did carBytes =
+  case readCarWithRoot carBytes of
+    Left err -> return (Left (mapCarError err))
+    Right (rootCid, blocks) -> do
+      -- Store all blocks.
+      _ <- Map.traverseWithKey (putBlock store) blocks
+      -- Set the repo head to the root (commit) CID.
+      setRepoHead store did rootCid
+      return (Right rootCid)
+  where
+    mapCarError :: CarError -> PdsError
+    mapCarError CarBadVarint       = PdsCommitDecodeError "CAR: bad varint"
+    mapCarError (CarBadHeader t)   = PdsCommitDecodeError ("CAR: bad header: " <> t)
+    mapCarError CarNoRoot          = PdsCommitDecodeError "CAR: no root"
+    mapCarError CarMultipleRoots   = PdsCommitDecodeError "CAR: multiple roots"
+    mapCarError (CarBadCid t)      = PdsCommitDecodeError ("CAR: bad CID: " <> t)
+    mapCarError (CarBadBlock t)    = PdsCommitDecodeError ("CAR: bad block: " <> t)

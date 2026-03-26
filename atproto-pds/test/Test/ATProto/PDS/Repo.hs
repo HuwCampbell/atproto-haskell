@@ -219,6 +219,47 @@ prop_deterministicMst = withTests 10 . property $ do
   -- The CID should be consistent.
   cidForDagCbor body === recCid
 
+-- | Export a repository to CAR and import into a fresh store; records
+-- survive the round-trip.
+prop_exportImportRoundTrip :: Property
+prop_exportImportRoundTrip = withTests 10 . property $ do
+  col  <- forAll genCollection
+  rk   <- forAll genRecordKey
+  body <- forAll genRecordBytes
+  (store1, key) <- evalIO setup
+
+  _ <- evalEither =<< evalIO (initRepo store1 testDID key)
+  commit1 <- evalEither =<< evalIO (createRecord store1 testDID key col rk body)
+
+  -- Export.
+  carBytes <- evalEither =<< evalIO (exportRepoCar store1 testDID)
+
+  -- Import into a fresh store.
+  store2 <- evalIO newInMemoryStore
+  commit2 <- evalEither =<< evalIO (importRepoCar store2 testDID carBytes)
+
+  -- The commit CID should be the same.
+  commit2 === commit1
+
+  -- The record should be retrievable from the new store.
+  r <- evalEither =<< evalIO (getRecord store2 commit2 col rk)
+  r === Just body
+
+-- | Export an empty repo to CAR and re-import; listing records yields
+-- an empty list.
+prop_exportImportEmpty :: Property
+prop_exportImportEmpty = withTests 5 . property $ do
+  (store1, key) <- evalIO setup
+  _ <- evalEither =<< evalIO (initRepo store1 testDID key)
+
+  carBytes <- evalEither =<< evalIO (exportRepoCar store1 testDID)
+
+  store2 <- evalIO newInMemoryStore
+  commit2 <- evalEither =<< evalIO (importRepoCar store2 testDID carBytes)
+
+  recs <- evalEither =<< evalIO (listRecords store2 commit2 "any.collection")
+  recs === []
+
 -- ---------------------------------------------------------------------------
 -- Helpers
 -- ---------------------------------------------------------------------------
@@ -267,4 +308,6 @@ tests = Group "ATProto.PDS.Repo"
   , ("multiple collections independent",       prop_multipleCollections)
   , ("update changes content",                 prop_updateRecord)
   , ("MST CID is deterministic",              prop_deterministicMst)
+  , ("export/import CAR round-trip",           prop_exportImportRoundTrip)
+  , ("export/import empty repo CAR",           prop_exportImportEmpty)
   ]
