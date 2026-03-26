@@ -34,8 +34,11 @@ library
     , crypton                >= 0.32 && < 1.2
     , text                   >= 1.2  && < 2.2
     , time                   >= 1.9  && < 1.15
+    , transformers
+    , transformers-either
     , atproto-haskell-crypto
     , atproto-haskell-did
+    , atproto-haskell-repo-verify
   hs-source-dirs:   src
   default-language: Haskell2010
 
@@ -51,6 +54,7 @@ test-suite atproto-service-auth-tests
     , text                          >= 1.2  && < 2.2
     , time                          >= 1.9  && < 1.15
     , atproto-haskell-crypto
+    , atproto-haskell-did
     , atproto-haskell-service-auth
     , hedgehog                      >= 1.4  && < 1.8
   hs-source-dirs:   test

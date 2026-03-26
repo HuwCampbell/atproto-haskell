@@ -82,9 +82,6 @@ packages (atproto-haskell-did for DID documents, atproto-haskell-identity
 for handle resolution), which is a deliberate decomposition into smaller
 units of responsibility.
 
-The reference also caches resolved documents with configurable TTLs.
-No caching layer exists in atproto-haskell-did; this is a gap.
-
 
 atproto-haskell-identity  (@atproto/identity, handle portion)
 --------------------------------------------------------------
@@ -242,7 +239,6 @@ Summary of gaps
 
 The following items from the reference packages are not yet implemented:
 
-- DID document caching with configurable TTL
 - Cross-validation of resolved handles against DID document alsoKnownAs
 - Configurable DNS timeout in HandleResolver
 - exportPrivKey / exportPublicKey in atproto-haskell-crypto
@@ -502,7 +498,7 @@ and assesses readiness.
 | auth-verifier.ts — JWT/OAuth token verification | atproto-service-auth (service-to-service); atproto-oauth (client-side); atproto-xrpc-server AuthVerifier hook wires them to XRPC handlers | Partial (no server-side OAuth provider) |
 | auth-routes.ts / auth-scope.ts — OAuth provider routes | None | Missing |
 | sequencer/ — outbound event sequencer (firehose emitter) | atproto-firehose covers the consumer side | Missing (producer side) |
-| did-cache/ — persisted DID document cache | None | Missing |
+| did-cache/ — persisted DID document cache | CachingResolver | Present |
 | disk-blobstore.ts / aws — blob storage | None | Missing |
 | mailer/ — email for verification and password reset | None | Missing (out of scope for library) |
 | handle/ — handle resolution and validation | atproto-identity + atproto-syntax | Present |

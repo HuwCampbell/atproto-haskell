@@ -22,6 +22,7 @@ library
       ATProto.DID
       ATProto.DID.Document
       ATProto.DID.Resolver
+      ATProto.DID.Resolver.Caching
       ATProto.DID.Resolver.Dispatch
       ATProto.DID.Resolver.PLC
       ATProto.DID.Resolver.Web
@@ -30,9 +31,10 @@ library
     , aeson           >= 2.0  && < 2.3
     , bytestring      >= 0.10 && < 0.13
     , cache           >= 0.1  && < 0.2
+    , clock           >= 0.8  && < 0.9
     , http-client     >= 0.7  && < 0.8
     , http-client-tls >= 0.3  && < 0.5
-    , http-types     >= 0.12 && < 0.13
+    , http-types      >= 0.12 && < 0.13
     , text            >= 1.2  && < 2.2
   hs-source-dirs:   src
   default-extensions: OverloadedStrings

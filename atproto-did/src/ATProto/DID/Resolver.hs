@@ -10,6 +10,7 @@
 module ATProto.DID.Resolver
   ( -- * Typeclass
     DidResolver (..)
+  , CachingDidResolver (..)
     -- * Errors
   , ResolveError (..)
   ) where
@@ -41,3 +42,12 @@ class DidResolver r where
   -- 'ResolveError' describing the failure.  Network-level IO exceptions
   -- (e.g. connection refused) are propagated as-is.
   resolve :: r -> T.Text -> IO (Either ResolveError DidDocument)
+
+-- | A typeclass to refresh the resolution of a DID.
+class DidResolver r => CachingDidResolver r where
+  -- | Attempt to resolve a DID; forcing a refresh of the cache.
+  --
+  -- Returns 'Right' with the 'DidDocument' on success, or 'Left' with a
+  -- 'ResolveError' describing the failure.  Network-level IO exceptions
+  -- (e.g. connection refused) are propagated as-is.
+  refreshResolve :: r -> T.Text -> IO (Either ResolveError DidDocument)

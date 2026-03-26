@@ -43,4 +43,4 @@ data VerifyError
     -- ^ A CAR-layer error occurred.
   | VerifyCommitDecodeError String
     -- ^ CBOR decoding of the commit block failed.
-  deriving (Show)
+  deriving (Eq, Show)

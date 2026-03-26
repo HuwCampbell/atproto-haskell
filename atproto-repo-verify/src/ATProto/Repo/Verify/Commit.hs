@@ -21,7 +21,6 @@ import qualified Data.ByteString      as BS
 import qualified Data.ByteString.Lazy as BL
 import qualified Data.Map.Strict      as Map
 import qualified Data.Text            as T
-import qualified Data.Text.Encoding   as TE
 import qualified Codec.CBOR.Decoding  as D
 import qualified Codec.CBOR.Read      as R
 import qualified Codec.CBOR.Encoding  as E

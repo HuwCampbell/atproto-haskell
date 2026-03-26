@@ -3,8 +3,6 @@ module Test.ATProto.MST.Tree (tests) where
 
 import Hedgehog
 import qualified Data.ByteString as BS
-import qualified Data.Map.Strict as Map
-import qualified Data.Text       as T
 
 import ATProto.Car.Cid      (CidBytes (..), parseCidFromBytes)
 import ATProto.Car.Parser   (readCarWithRoot)

@@ -68,6 +68,7 @@ module ATProto.DID
   , Service (..)
     -- * Resolver interface
   , DidResolver (..)
+  , CachingDidResolver (..)
   , ResolveError (..)
     -- * did:plc resolver
   , PlcResolver
@@ -80,6 +81,12 @@ module ATProto.DID
   , DispatchResolver
   , newDispatchResolver
   , defaultDispatchResolver
+    -- * Cached did resolver
+  , CachingResolver
+  , newCachingResolver
+  , defaultCachingResolver
+    -- * Caching dispatch resolver
+  , defaultDidResolver
   ) where
 
 import ATProto.DID.Document
@@ -87,3 +94,9 @@ import ATProto.DID.Resolver
 import ATProto.DID.Resolver.Dispatch
 import ATProto.DID.Resolver.PLC
 import ATProto.DID.Resolver.Web
+import ATProto.DID.Resolver.Caching
+
+defaultDidResolver :: IO (CachingResolver DispatchResolver)
+defaultDidResolver = do
+  dispatch <- defaultDispatchResolver
+  defaultCachingResolver dispatch

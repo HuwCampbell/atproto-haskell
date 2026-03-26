@@ -13,6 +13,10 @@ module ATProto.ServiceAuth.Verify
   , verifyServiceJwt
   ) where
 
+import           Control.Monad               (when, unless)
+import           Control.Monad.Trans.Class   (lift)
+import           Control.Monad.Trans.Either  (runEitherT, newEitherT, left, hoistEither, firstEitherT)
+
 import qualified Data.Aeson                  as Aeson
 import qualified Data.Aeson.Key              as AesonKey
 import qualified Data.Aeson.Types            as Aeson
@@ -20,12 +24,17 @@ import qualified Data.ByteString             as BS
 import qualified Data.ByteString.Base64.URL  as Base64URL
 import qualified Data.ByteString.Char8       as BC
 import qualified Data.ByteString.Lazy        as BL
+import           Data.Foldable               (for_)
 import qualified Data.Text                   as T
 import qualified Data.Text.Encoding          as TE
 import           Data.Time.Clock.POSIX       (getPOSIXTime)
 
 import           ATProto.Crypto.EC           (verify)
-import           ATProto.Crypto.Types        (PubKey (..), Signature (..), SigStrictness (..))
+import           ATProto.Crypto.Types        (Signature (..), SigStrictness (..))
+import           ATProto.DID                 (DidResolver (..), CachingDidResolver (..), ResolveError)
+import           ATProto.Repo.Verify.Key     (resolveAtprotoKey)
+import           ATProto.Repo.Verify.Types   (VerifyError)
+
 
 -- | The validated payload of a service authentication JWT.
 data ServiceJwtPayload = ServiceJwtPayload
@@ -51,7 +60,9 @@ data ServiceAuthError
     -- ^ The lexicon method claim does not match the expected NSID.
   | BadJwtSignature
     -- ^ The ECDSA signature is invalid.
-  | BadJwtIss String
+  | BadJwtIss ResolveError
+    -- ^ The issuer key could not be resolved.
+  | BadSigningKeys VerifyError
     -- ^ The issuer key could not be resolved.
   deriving (Eq, Show)
 
@@ -62,63 +73,73 @@ data ServiceAuthError
 -- the first attempt, the callback is invoked again with
 -- @forceRefresh = True@ to allow cache invalidation.
 verifyServiceJwt
-  :: T.Text
+  :: CachingDidResolver resolver
+  -- ^ How to retrieve a DID
+  => T.Text
   -- ^ The compact JWS token.
   -> Maybe T.Text
   -- ^ Expected audience DID.  Pass 'Nothing' to skip the audience check.
   -> Maybe T.Text
   -- ^ Expected lexicon method.  Pass 'Nothing' to skip the lxm check.
-  -> (T.Text -> Bool -> IO (Either String PubKey))
+  -> resolver
   -- ^ @getSigningKey iss forceRefresh@ – resolve the public key for
   -- an issuer DID.
   -> IO (Either ServiceAuthError ServiceJwtPayload)
-verifyServiceJwt jwt ownDid lxm getSigningKey = do
-  case splitJwt (TE.encodeUtf8 jwt) of
-    Left err -> return (Left err)
-    Right (headerB64, payloadB64, sigB64) -> do
-      case parseHeaderAndPayload headerB64 payloadB64 of
-        Left err -> return (Left err)
-        Right (iss, aud, expT, mLxm) -> do
-          -- Check expiry
-          now <- round <$> getPOSIXTime
-          if expT <= (now :: Int)
-            then return (Left JwtExpired)
-            else do
-              -- Check audience
-              case ownDid of
-                Just expected | aud /= expected -> return (Left BadJwtAudience)
-                _ -> do
-                  -- Check lexicon method
-                  case (lxm, mLxm) of
-                    (Just expected, Just actual) | actual /= expected ->
-                      return (Left BadJwtLexiconMethod)
-                    (Just _, Nothing) ->
-                      return (Left BadJwtLexiconMethod)
-                    _ -> do
-                      -- Decode signature
-                      case base64urlDecode sigB64 of
-                        Left err -> return (Left (BadJwt ("bad signature encoding: " ++ err)))
-                        Right sigBytes -> do
-                          let sigInput = headerB64 <> "." <> payloadB64
-                              sig      = Signature sigBytes
-                              payload  = ServiceJwtPayload iss aud expT mLxm
+verifyServiceJwt jwt ownDid lxm resolver = runEitherT $ do
+  (headerB64, payloadB64, sigB64) <-
+    hoistEither $ splitJwt (TE.encodeUtf8 jwt)
 
-                          -- First attempt with cached key
-                          keyResult <- getSigningKey iss False
-                          case keyResult of
-                            Left err -> return (Left (BadJwtIss err))
-                            Right pubKey ->
-                              if verify Strict pubKey sigInput sig
-                                then return (Right payload)
-                                else do
-                                  -- Retry with force-refreshed key
-                                  keyResult2 <- getSigningKey iss True
-                                  case keyResult2 of
-                                    Left err2 -> return (Left (BadJwtIss err2))
-                                    Right pubKey2 ->
-                                      if verify Strict pubKey2 sigInput sig
-                                        then return (Right payload)
-                                        else return (Left BadJwtSignature)
+  (iss, aud, expT, mLxm) <-
+    hoistEither $ parseHeaderAndPayload headerB64 payloadB64
+
+  now <- round <$> lift getPOSIXTime
+  when (expT <= now) $
+    left JwtExpired
+
+  -- Check audience
+  for_ ownDid $ \expected ->
+    when (aud /= expected) $
+      left BadJwtAudience
+
+  for_ lxm $ \expected ->
+    unless (Just expected == mLxm) $
+      left BadJwtLexiconMethod
+
+  -- Decode signature
+  sigBytes <-
+    hoistEither $
+      mapLeft (\e -> BadJwt ("bad signature encoding: " ++ e)) $
+        base64urlDecode sigB64
+
+  let sigInput = headerB64 <> "." <> payloadB64
+      sig      = Signature sigBytes
+      payload  = ServiceJwtPayload iss aud expT mLxm
+
+  -- First attempt with cached key
+  didDocument <-
+    firstEitherT BadJwtIss . newEitherT $
+      resolve resolver iss
+
+  pubKey <-
+    either (left . BadSigningKeys) pure $
+      resolveAtprotoKey didDocument
+
+  if verify Strict pubKey sigInput sig then
+    return payload
+  else do
+    -- Try refreshing the DID document in case it was updated
+    didDocument2 <-
+      firstEitherT BadJwtIss . newEitherT $
+        refreshResolve resolver iss
+
+    pubKey2 <-
+      either (left . BadSigningKeys) pure $
+        resolveAtprotoKey didDocument2
+
+    if verify Strict pubKey2 sigInput sig then
+      return payload
+    else
+      left BadJwtSignature
 
 -- ---------------------------------------------------------------------------
 -- Internal helpers

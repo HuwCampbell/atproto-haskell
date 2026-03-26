@@ -6,23 +6,67 @@ import qualified Hedgehog.Range as Range
 import qualified Data.Text      as T
 import           Data.Time.Clock.POSIX (getPOSIXTime)
 
-import ATProto.Crypto.EC    (generateKeyPair)
-import ATProto.Crypto.Types (Curve (..), PubKey)
+import ATProto.Crypto.EC          (generateKeyPair)
+import ATProto.Crypto.Multikey    (encodeMultikey)
+import ATProto.Crypto.Types       (Curve (..), PubKey)
 
 import ATProto.ServiceAuth.Create (ServiceJwtParams (..), createServiceJwt)
 import ATProto.ServiceAuth.Verify (ServiceJwtPayload (..), ServiceAuthError (..), verifyServiceJwt)
+import ATProto.DID                (DidResolver(..), DidDocument (..), ResolveError (..), VerificationMethod (..), CachingDidResolver (..))
 
 -- ---------------------------------------------------------------------------
 -- Helpers
 -- ---------------------------------------------------------------------------
 
 -- | A signing-key callback that always returns the given public key.
-alwaysReturn :: PubKey -> T.Text -> Bool -> IO (Either String PubKey)
-alwaysReturn pub _ _ = return (Right pub)
+alwaysReturn :: PubKey -> MockDidResolver
+alwaysReturn = MockDidResolver
+
+newtype MockDidResolver =
+  MockDidResolver PubKey
+
+instance DidResolver MockDidResolver where
+  resolve (MockDidResolver key) did = do
+    let
+      vmId' =
+        did <> "#atproto"
+      verifier =
+        VerificationMethod vmId' "EcdsaSecp256k1VerificationKey2019" did
+            (Just (T.pack (encodeMultikey key)))
+    pure . Right $
+      DidDocument did []  [verifier] []
+
+instance CachingDidResolver MockDidResolver where
+  refreshResolve = resolve
+
+-- | A signing-key callback that returns the first key, then refreshes to the second.
+splitReturn :: PubKey -> PubKey -> MockSplitDidResolver
+splitReturn = MockSplitDidResolver
+
+data MockSplitDidResolver =
+  MockSplitDidResolver PubKey PubKey
+
+instance DidResolver MockSplitDidResolver where
+  resolve (MockSplitDidResolver old _) = do
+    resolve (MockDidResolver old)
+
+instance CachingDidResolver MockSplitDidResolver where
+  refreshResolve (MockSplitDidResolver _ new) = do
+    resolve (MockDidResolver new)
+
+data FailResolver = FailResolver
+
+instance CachingDidResolver FailResolver where
+  refreshResolve = resolve
+
+instance DidResolver FailResolver where
+  resolve FailResolver did =
+    pure . Left $
+      DidNotFound did
 
 -- | A signing-key callback that always fails.
-alwaysFail :: T.Text -> Bool -> IO (Either String PubKey)
-alwaysFail _ _ = return (Left "no key available")
+alwaysFail :: FailResolver
+alwaysFail = FailResolver
 
 genIss :: Gen T.Text
 genIss = do
@@ -205,10 +249,10 @@ prop_keyResolutionFailure = property $ do
         , sjpExp     = Nothing
         }
 
-  jwt <- evalIO (createServiceJwt params)
+  jwt    <- evalIO (createServiceJwt params)
   result <- evalIO (verifyServiceJwt jwt Nothing Nothing alwaysFail)
 
-  result === Left (BadJwtIss "no key available")
+  result === Left (BadJwtIss (DidNotFound "did:plc:issuer"))
 
 -- | Skipping aud check (Nothing) allows any audience.
 prop_skipAudCheck :: Property
@@ -235,7 +279,7 @@ prop_skipAudCheck = property $ do
 -- | The force-refresh retry succeeds when the initial key is wrong.
 prop_forceRefreshRetry :: Property
 prop_forceRefreshRetry = property $ do
-  (priv, pub) <- evalIO (generateKeyPair P256)
+  (priv, pub)   <- evalIO (generateKeyPair P256)
   (_, wrongPub) <- evalIO (generateKeyPair P256)
 
   let params = ServiceJwtParams
@@ -246,13 +290,8 @@ prop_forceRefreshRetry = property $ do
         , sjpExp     = Nothing
         }
 
-      -- Return wrong key first, correct key on refresh
-      getKey :: T.Text -> Bool -> IO (Either String PubKey)
-      getKey _ False = return (Right wrongPub)
-      getKey _ True  = return (Right pub)
-
-  jwt <- evalIO (createServiceJwt params)
-  result <- evalIO (verifyServiceJwt jwt (Just "did:plc:audience") Nothing getKey)
+  jwt    <- evalIO (createServiceJwt params)
+  result <- evalIO (verifyServiceJwt jwt Nothing Nothing (splitReturn wrongPub pub))
 
   case result of
     Left err -> do
