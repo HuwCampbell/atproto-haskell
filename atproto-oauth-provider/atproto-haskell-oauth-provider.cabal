@@ -1,0 +1,83 @@
+cabal-version:      3.0
+name:               atproto-haskell-oauth-provider
+version:            0.1.0.0
+synopsis:           AT Protocol OAuth 2.1 provider with DPoP
+description:
+  An OAuth 2.1 provider (authorization server / resource server) for
+  the AT Protocol, implementing the server-side components of:
+  .
+  * DPoP proof verification (RFC 9449)
+  * HMAC-based rotating DPoP nonces
+  * DPoP-bound access token creation and verification (at+jwt, RFC 9068)
+  * Request authentication combining DPoP proof and token validation
+  .
+  Ported from the upstream TypeScript reference implementation
+  (@atproto/oauth-provider).
+license:            MIT
+license-file:       LICENSE
+author:             Huw Campbell
+maintainer:         huw.campbell@gmail.com
+category:           Network, Security
+build-type:         Simple
+extra-doc-files:    CHANGELOG.md
+
+common warnings
+  ghc-options: -Wall
+  default-extensions: OverloadedStrings
+
+library
+  import:           warnings
+  exposed-modules:
+      ATProto.OAuth.Provider
+      ATProto.OAuth.Provider.Types
+      ATProto.OAuth.Provider.DPoP.Nonce
+      ATProto.OAuth.Provider.DPoP.Verifier
+      ATProto.OAuth.Provider.Token
+      ATProto.OAuth.Provider.Verifier
+  build-depends:
+      base            >= 4.14 && < 5
+    , aeson           >= 2.0  && < 2.3
+    , bytestring      >= 0.10 && < 0.13
+    , case-insensitive
+    , containers      >= 0.6  && < 0.9
+
+    -- jose-0.12 and crypton-1.x are incompatible: crypton >= 1.0 switched its
+    -- ByteArrayAccess typeclass source from the 'memory' package to 'ram'
+    -- (a fork of memory), while jose-0.12 imports ByteArrayAccess from 'memory'.
+    -- Pinning crypton to 0.34 keeps both packages on the same ByteArrayAccess
+    -- identity.
+    , crypton         >= 0.34 && < 1.0
+    , http-types      >= 0.12 && < 0.13
+    , jose            >= 0.12 && < 0.13
+    , lens            >= 5.0  && < 5.4
+    , memory          >= 0.14 && < 0.19
+    , text            >= 1.2  && < 2.2
+    , time            >= 1.9  && < 1.15
+    , transformers
+  hs-source-dirs:   src
+  default-language: Haskell2010
+
+test-suite atproto-oauth-provider-tests
+  import:           warnings
+  type:             exitcode-stdio-1.0
+  main-is:          Main.hs
+  other-modules:
+      Test.ATProto.OAuth.Provider.DPoP.Nonce
+      Test.ATProto.OAuth.Provider.DPoP.Verifier
+      Test.ATProto.OAuth.Provider.Token
+      Test.ATProto.OAuth.Provider.Verifier
+  build-depends:
+      base                              >= 4.14 && < 5
+    , aeson                             >= 2.0  && < 2.3
+    , bytestring                        >= 0.10 && < 0.13
+    , case-insensitive
+    , containers                        >= 0.6  && < 0.9
+    , jose                              >= 0.12 && < 0.13
+    , lens                              >= 5.0  && < 5.4
+    , text                              >= 1.2  && < 2.2
+    , time                              >= 1.9  && < 1.15
+    , atproto-haskell-oauth
+    , atproto-haskell-oauth-provider
+    , hedgehog                          >= 1.4  && < 1.8
+  hs-source-dirs:   test
+  default-language: Haskell2010
