@@ -48,10 +48,19 @@ module ATProto.Repo
   , defaultListRecordsParams
   , ListRecordsResponse (..)
   , RepoRecord (..)
+    -- * @com.atproto.repo.createRecord@
+  , createRecord
+  , CreateRecordRequest (..)
+  , CreateRecordResponse (..)
     -- * @com.atproto.repo.putRecord@
   , putRecord
   , PutRecordRequest (..)
   , PutRecordResponse (..)
+    -- * @com.atproto.repo.getRecord@
+  , getRecord
+  , GetRecordParams (..)
+  , defaultGetRecordParams
+  , GetRecordResponse (..)
     -- * @com.atproto.repo.uploadBlob@
   , uploadBlob
   , UploadBlobRequest (..)
@@ -63,10 +72,14 @@ module ATProto.Repo
   , getProfile
   , GetProfileParams (..)
   , ProfileView (..)
+  , CommitMeta (..)
   ) where
 
+import ATProto.Repo.CommitMeta
 import ATProto.Repo.GetBlob
 import ATProto.Repo.GetProfile
+import ATProto.Repo.GetRecord
 import ATProto.Repo.ListRecords
+import ATProto.Repo.CreateRecord
 import ATProto.Repo.PutRecord
 import ATProto.Repo.UploadBlob

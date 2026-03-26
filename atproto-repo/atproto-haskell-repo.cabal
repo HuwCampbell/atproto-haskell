@@ -24,9 +24,11 @@ library
       ATProto.Bsky.Feed.Post
       ATProto.Repo
       ATProto.Repo.CommitMeta
+      ATProto.Repo.CreateRecord
       ATProto.Repo.DeleteRecord
       ATProto.Repo.GetBlob
       ATProto.Repo.GetProfile
+      ATProto.Repo.GetRecord
       ATProto.Repo.ListRecords
       ATProto.Repo.PutRecord
       ATProto.Repo.UploadBlob
