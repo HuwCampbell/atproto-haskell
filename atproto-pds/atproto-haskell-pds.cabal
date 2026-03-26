@@ -1,0 +1,71 @@
+cabal-version:      3.0
+name:               atproto-haskell-pds
+version:            0.1.0.0
+synopsis:           AT Protocol Personal Data Server core
+description:
+  Core library for building an AT Protocol Personal Data Server (PDS).
+  Provides type-class–based storage abstractions, repository management
+  (initialisation, record CRUD, commit signing), and concrete in-memory
+  and file-system storage backends.
+
+  The storage layer is pluggable: implement 'BlockStore' and 'RepoStore'
+  for your preferred backend (SQLite, PostgreSQL, …) while reusing the
+  same repository logic.
+license:            MIT
+license-file:       LICENSE
+author:             Huw Campbell
+maintainer:         huw.campbell@gmail.com
+category:           Network
+build-type:         Simple
+extra-doc-files:    CHANGELOG.md
+
+common warnings
+  ghc-options: -Wall
+  default-extensions: OverloadedStrings
+
+library
+  import:           warnings
+  exposed-modules:
+      ATProto.PDS
+      ATProto.PDS.Storage
+      ATProto.PDS.Storage.InMemory
+      ATProto.PDS.Storage.FileSystem
+      ATProto.PDS.Commit
+      ATProto.PDS.Repo
+  build-depends:
+      base                       >= 4.14  && < 5
+    , bytestring                 >= 0.10  && < 0.13
+    , containers                 >= 0.6   && < 0.8
+    , text                       >= 1.2   && < 2.2
+    , cborg                      >= 0.2   && < 0.3
+    , directory                  >= 1.3   && < 1.4
+    , filepath                   >= 1.4   && < 1.6
+    , atproto-haskell-car
+    , atproto-haskell-mst
+    , atproto-haskell-crypto
+    , atproto-haskell-syntax
+  hs-source-dirs:   src
+  default-language: Haskell2010
+
+test-suite atproto-pds-tests
+  import:           warnings
+  type:             exitcode-stdio-1.0
+  main-is:          Main.hs
+  other-modules:
+      Test.ATProto.PDS.Repo
+      Test.ATProto.PDS.Storage
+  build-depends:
+      base                       >= 4.14  && < 5
+    , bytestring                 >= 0.10  && < 0.13
+    , containers                 >= 0.6   && < 0.8
+    , text                       >= 1.2   && < 2.2
+    , directory                  >= 1.3   && < 1.4
+    , filepath                   >= 1.4   && < 1.6
+    , atproto-haskell-pds
+    , atproto-haskell-car
+    , atproto-haskell-mst
+    , atproto-haskell-crypto
+    , atproto-haskell-syntax
+    , hedgehog                   >= 1.4   && < 1.8
+  hs-source-dirs:   test
+  default-language: Haskell2010

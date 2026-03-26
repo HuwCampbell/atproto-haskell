@@ -26,8 +26,11 @@ import qualified Codec.CBOR.Read      as R
 import qualified Codec.CBOR.Encoding  as E
 import qualified Codec.CBOR.Write     as W
 
-import ATProto.Car.Cid            (CidBytes (..), parseCidFromBytes)
+import ATProto.Car.Cid            (CidBytes)
 import ATProto.Car.BlockMap       (BlockMap)
+import ATProto.Car.DagCbor        (encodeCidTag42, encodeNullableCidTag42,
+                                   decodeCidTag42, decodeNullableCidTag42,
+                                   skipValue)
 import ATProto.Car.Parser         (readCarWithRoot, CarError (..))
 import ATProto.Crypto.Types       (PubKey, Signature (..), SigStrictness (..))
 import ATProto.Crypto.EC          (verify)
@@ -91,10 +94,10 @@ parseCommitMap n mDid mVer mRev mPrev mData mSig = do
       v <- D.decodeString
       parseCommitMap (n-1) mDid mVer (Just v) mPrev mData mSig
     "prev" -> do
-      cid <- decodeNullableTag42
+      cid <- decodeNullableCidTag42
       parseCommitMap (n-1) mDid mVer mRev (Just cid) mData mSig
     "data" -> do
-      cid <- decodeTag42
+      cid <- decodeCidTag42
       parseCommitMap (n-1) mDid mVer mRev mPrev (Just cid) mSig
     "sig" -> do
       v <- D.decodeBytes
@@ -103,49 +106,6 @@ parseCommitMap n mDid mVer mRev mPrev mData mSig = do
       -- Skip unknown field: try common types
       skipValue
       parseCommitMap (n-1) mDid mVer mRev mPrev mData mSig
-
--- | Skip an arbitrary CBOR value.
-skipValue :: D.Decoder s ()
-skipValue = do
-  ty <- D.peekTokenType
-  case ty of
-    D.TypeNull    -> D.decodeNull
-    D.TypeBool    -> D.decodeBool  >> return ()
-    D.TypeUInt    -> D.decodeWord  >> return ()
-    D.TypeNInt    -> D.decodeNegWord >> return ()
-    D.TypeBytes   -> D.decodeBytes >> return ()
-    D.TypeString  -> D.decodeString >> return ()
-    D.TypeListLen -> do
-      len <- D.decodeListLen
-      mapM_ (\_ -> skipValue) [1..len]
-    D.TypeMapLen  -> do
-      len <- D.decodeMapLen
-      mapM_ (\_ -> D.decodeString >> skipValue) [1..len]
-    D.TypeTag     -> do
-      _ <- D.decodeTag
-      skipValue
-    _ -> fail ("skipValue: unsupported token type " ++ show ty)
-
-decodeTag42 :: D.Decoder s CidBytes
-decodeTag42 = do
-  tag <- D.decodeTag
-  if tag /= 42
-    then fail ("expected CBOR tag 42, got " ++ show tag)
-    else do
-      raw <- D.decodeBytes
-      let stripped = if not (BS.null raw) && BS.head raw == 0x00
-                       then BS.tail raw
-                       else raw
-      case parseCidFromBytes stripped 0 of
-        Left err       -> fail err
-        Right (cid, _) -> return cid
-
-decodeNullableTag42 :: D.Decoder s (Maybe CidBytes)
-decodeNullableTag42 = do
-  ty <- D.peekTokenType
-  case ty of
-    D.TypeNull -> D.decodeNull >> return Nothing
-    _          -> Just <$> decodeTag42
 
 -- ---------------------------------------------------------------------------
 -- Canonical DAG-CBOR re-encoding (unsigned commit)
@@ -174,18 +134,10 @@ encodeUnsignedCommit c =
       <> encodeCidTag42 (commitData c)
       -- "prev" (len 4, lex order 2nd)
       <> E.encodeString "prev"
-      <> encodeMaybeCidTag42 (commitPrev c)
+      <> encodeNullableCidTag42 (commitPrev c)
       -- "version" (len 7)
       <> E.encodeString "version"
       <> E.encodeInt (commitVersion c)
-
-encodeCidTag42 :: CidBytes -> E.Encoding
-encodeCidTag42 (CidBytes bs) =
-  E.encodeTag 42 <> E.encodeBytes (BS.cons 0x00 bs)
-
-encodeMaybeCidTag42 :: Maybe CidBytes -> E.Encoding
-encodeMaybeCidTag42 Nothing    = E.encodeNull
-encodeMaybeCidTag42 (Just cid) = encodeCidTag42 cid
 
 -- ---------------------------------------------------------------------------
 -- Signature verification

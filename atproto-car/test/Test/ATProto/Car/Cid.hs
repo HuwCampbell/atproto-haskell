@@ -8,7 +8,7 @@ import qualified Data.Text       as T
 import           Data.Bits       (shiftR, (.|.))
 import           Data.Word       (Word8)
 
-import ATProto.Car.Cid
+import ATProto.Car.Cid hiding (encodeVarint)
 
 -- ---------------------------------------------------------------------------
 -- Generator

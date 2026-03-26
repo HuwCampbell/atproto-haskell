@@ -10,6 +10,7 @@ packages:
   atproto-mst/
   atproto-oauth/
   atproto-oauth-provider/
+  atproto-pds/
   atproto-repo-verify/
   atproto-repo/
   atproto-service-auth/

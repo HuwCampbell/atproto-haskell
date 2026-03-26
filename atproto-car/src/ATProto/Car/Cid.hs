@@ -13,25 +13,53 @@
 module ATProto.Car.Cid
   ( -- * Type
     CidBytes (..)
+    -- * Construction
+  , cidForDagCbor
     -- * Parsing
   , parseCidFromBytes
     -- * Display
   , cidToText
   , textToCidBytes
+    -- * Varint helpers (re-exported for the writer)
+  , encodeVarint
   ) where
 
 import           Data.Bits  (shiftR, shiftL, (.|.), (.&.))
 import           Data.Word  (Word8)
 import qualified Data.ByteString as BS
+import qualified Data.ByteArray  as BA
 import qualified Data.Text       as T
+import qualified Crypto.Hash     as H
 
 -- | A CIDv1 stored as its raw binary representation.
 newtype CidBytes = CidBytes { unCidBytes :: BS.ByteString }
   deriving (Eq, Ord, Show)
 
 -- ---------------------------------------------------------------------------
+-- CID construction
+-- ---------------------------------------------------------------------------
+
+-- | Compute a CIDv1 for a raw DAG-CBOR block.
+--
+-- The CID uses codec @0x71@ (dag-cbor) and hash @sha2-256@
+-- (@0x12@, 32-byte digest).
+cidForDagCbor :: BS.ByteString -> CidBytes
+cidForDagCbor raw =
+  let digest    = H.hash raw :: H.Digest H.SHA256
+      hashBytes = BS.pack (BA.unpack digest)
+      header    = BS.pack [0x01, 0x71, 0x12, 0x20]
+  in CidBytes (header <> hashBytes)
+
+-- ---------------------------------------------------------------------------
 -- Varint helpers
 -- ---------------------------------------------------------------------------
+
+-- | Encode a non-negative integer as an unsigned LEB-128 varint.
+encodeVarint :: Int -> BS.ByteString
+encodeVarint n
+  | n < 0x80  = BS.singleton (fromIntegral n)
+  | otherwise = BS.cons (fromIntegral (n .|. 0x80))
+                        (encodeVarint (n `shiftR` 7))
 
 -- | Decode an unsigned LEB-128 varint from a 'BS.ByteString' starting at
 -- @offset@.  Returns @(value, bytesConsumed)@ or an error.

@@ -26,6 +26,7 @@ import qualified Data.ByteString.Lazy as BL
 
 import           ATProto.Car.Cid      (CidBytes (..), parseCidFromBytes)
 import           ATProto.Car.BlockMap (BlockMap)
+import           ATProto.Car.DagCbor  (decodeCidTag42)
 
 -- ---------------------------------------------------------------------------
 -- Error type
@@ -95,27 +96,12 @@ parseHeader hdrBytes =
           parseMap (n - 1) mRoots
         "roots" -> do
           len  <- D.decodeListLen
-          cids <- mapM (\_ -> decodeTag42Cid) [1..len]
+          cids <- mapM (\_ -> decodeCidTag42) [1..len]
           parseMap (n - 1) (Just cids)
         _ -> do
           -- Skip unknown field value with a best-effort approach
           _ <- D.decodeNull
           parseMap (n - 1) mRoots
-
-    -- Decode a CBOR tag-42 CID: tag(42, bytes(\x00 ++ cid_raw))
-    decodeTag42Cid :: D.Decoder s CidBytes
-    decodeTag42Cid = do
-      tag <- D.decodeTag
-      if tag /= 42
-        then fail ("expected CBOR tag 42, got " ++ show tag)
-        else do
-          rawWithPrefix <- D.decodeBytes
-          let raw = if not (BS.null rawWithPrefix) && BS.head rawWithPrefix == 0x00
-                      then BS.tail rawWithPrefix
-                      else rawWithPrefix
-          case parseCidFromBytes raw 0 of
-            Left  err      -> fail err
-            Right (cid, _) -> return cid
 
 -- ---------------------------------------------------------------------------
 -- Block sequence parsing

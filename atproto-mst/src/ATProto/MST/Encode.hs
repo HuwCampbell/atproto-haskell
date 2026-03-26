@@ -6,18 +6,17 @@
 module ATProto.MST.Encode
   ( -- * Encoding
     encodeNode
-    -- * CID computation
+    -- * CID computation (re-exported from "ATProto.Car.Cid")
   , cidForDagCbor
   ) where
 
 import qualified Data.ByteString     as BS
 import qualified Codec.CBOR.Encoding as E
 import qualified Codec.CBOR.Write    as W
-import qualified Crypto.Hash         as H
-import qualified Data.ByteArray      as BA
 
-import ATProto.Car.Cid  (CidBytes (..))
-import ATProto.MST.Node (NodeData (..), TreeEntry (..))
+import ATProto.Car.Cid    (cidForDagCbor)
+import ATProto.Car.DagCbor (encodeCidTag42, encodeNullableCidTag42)
+import ATProto.MST.Node   (NodeData (..), TreeEntry (..))
 
 -- ---------------------------------------------------------------------------
 -- Public API
@@ -35,17 +34,6 @@ import ATProto.MST.Node (NodeData (..), TreeEntry (..))
 encodeNode :: NodeData -> BS.ByteString
 encodeNode = W.toStrictByteString . nodeEncoding
 
--- | Compute a CIDv1 for a raw DAG-CBOR block.
---
--- The CID uses codec @0x71@ (dag-cbor) and hash @sha2-256@
--- (@0x12@, 32-byte digest).
-cidForDagCbor :: BS.ByteString -> CidBytes
-cidForDagCbor raw =
-  let digest    = H.hash raw :: H.Digest H.SHA256
-      hashBytes = BS.pack (BA.unpack digest)
-      header    = BS.pack [0x01, 0x71, 0x12, 0x20]
-  in CidBytes (header <> hashBytes)
-
 -- ---------------------------------------------------------------------------
 -- Internal CBOR encoding
 -- ---------------------------------------------------------------------------
@@ -54,7 +42,7 @@ nodeEncoding :: NodeData -> E.Encoding
 nodeEncoding (NodeData mLeft entries) =
      E.encodeMapLen 2
   <> E.encodeString "l"
-  <> encodeNullableCid mLeft
+  <> encodeNullableCidTag42 mLeft
   <> E.encodeString "e"
   <> encodeEntryList entries
 
@@ -71,16 +59,6 @@ encodeTreeEntry (TreeEntry prefix suffix value mRight) =
   <> E.encodeString "k"
   <> E.encodeBytes suffix
   <> E.encodeString "v"
-  <> encodeCid value
+  <> encodeCidTag42 value
   <> E.encodeString "t"
-  <> encodeNullableCid mRight
-
--- | Encode a CID as CBOR tag 42 with a @0x00@ multibase identity prefix.
-encodeCid :: CidBytes -> E.Encoding
-encodeCid (CidBytes raw) =
-  E.encodeTag 42 <> E.encodeBytes (BS.cons 0x00 raw)
-
--- | Encode an optional CID: CBOR null for 'Nothing', tag 42 for 'Just'.
-encodeNullableCid :: Maybe CidBytes -> E.Encoding
-encodeNullableCid Nothing    = E.encodeNull
-encodeNullableCid (Just cid) = encodeCid cid
+  <> encodeNullableCidTag42 mRight
