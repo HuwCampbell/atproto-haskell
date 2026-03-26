@@ -44,8 +44,7 @@ library
     -- jose-0.12 and crypton-1.x are incompatible: crypton >= 1.0 switched its
     -- ByteArrayAccess typeclass source from the 'memory' package to 'ram'
     -- (a fork of memory), while jose-0.12 imports ByteArrayAccess from 'memory'.
-    -- Pinning crypton to 0.34 keeps both packages on the same ByteArrayAccess
-    -- identity.
+    -- Constraining crypton < 1.0 keeps both packages on the same identity.
     , crypton         >= 0.34 && < 1.0
     , http-types      >= 0.12 && < 0.13
     , jose            >= 0.12 && < 0.13

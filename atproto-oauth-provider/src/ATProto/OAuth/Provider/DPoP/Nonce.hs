@@ -44,6 +44,7 @@ module ATProto.OAuth.Provider.DPoP.Nonce
 import           Data.IORef          (IORef, newIORef, readIORef, writeIORef)
 import qualified Data.ByteArray      as BA
 import           Data.ByteArray.Encoding (Base (..), convertToBase)
+import           Data.Bits           (shiftR)
 import qualified Data.ByteString     as BS
 import qualified Data.Text           as T
 import qualified Data.Text.Encoding  as TE
@@ -207,17 +208,12 @@ computeNonce secret counter =
 numTo64Bits :: Int -> BS.ByteString
 numTo64Bits n =
   BS.pack
-    [ fromIntegral (n `shiftR` 56) :: Word8
-    , fromIntegral (n `shiftR` 48) :: Word8
-    , fromIntegral (n `shiftR` 40) :: Word8
-    , fromIntegral (n `shiftR` 32) :: Word8
-    , fromIntegral (n `shiftR` 24) :: Word8
-    , fromIntegral (n `shiftR` 16) :: Word8
-    , fromIntegral (n `shiftR`  8) :: Word8
-    , fromIntegral  n              :: Word8
+    [ fromIntegral (shiftR n 56) :: Word8
+    , fromIntegral (shiftR n 48) :: Word8
+    , fromIntegral (shiftR n 40) :: Word8
+    , fromIntegral (shiftR n 32) :: Word8
+    , fromIntegral (shiftR n 24) :: Word8
+    , fromIntegral (shiftR n 16) :: Word8
+    , fromIntegral (shiftR n  8) :: Word8
+    , fromIntegral  n            :: Word8
     ]
-  where
-    shiftR :: Int -> Int -> Int
-    shiftR x k
-      | k >= 64   = 0
-      | otherwise  = x `quot` (2 ^ k)
