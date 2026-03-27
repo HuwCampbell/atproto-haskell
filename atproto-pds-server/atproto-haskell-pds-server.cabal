@@ -1,0 +1,100 @@
+cabal-version:      3.0
+name:               atproto-haskell-pds-server
+version:            0.1.0.0
+synopsis:           AT Protocol PDS XRPC server
+description:
+  A full AT Protocol Personal Data Server (PDS) exposing XRPC endpoints
+  over HTTP via WAI\/Warp.
+
+  Provides the server library and a stand-alone executable.  The server
+  is an OAuth provider and supports the core PDS XRPC endpoints
+  including repository management, sync, identity, and account
+  operations.
+license:            MIT
+license-file:       LICENSE
+author:             Huw Campbell
+maintainer:         huw.campbell@gmail.com
+category:           Network
+build-type:         Simple
+extra-doc-files:    CHANGELOG.md
+
+common warnings
+  ghc-options: -Wall
+  default-extensions: OverloadedStrings
+
+library
+  import:           warnings
+  exposed-modules:
+      ATProto.PDS.Server
+      ATProto.PDS.Server.Env
+      ATProto.PDS.Server.Auth
+      ATProto.PDS.Server.Endpoints.Server
+      ATProto.PDS.Server.Endpoints.Repo
+      ATProto.PDS.Server.Endpoints.Sync
+      ATProto.PDS.Server.Endpoints.Identity
+      ATProto.PDS.Server.Endpoints.Actor
+      ATProto.PDS.Server.Endpoints.Chat
+  build-depends:
+      base                              >= 4.14  && < 5
+    , bytestring                        >= 0.10  && < 0.13
+    , case-insensitive                  >= 1.2   && < 1.3
+    , containers                        >= 0.6   && < 0.8
+    , text                              >= 1.2   && < 2.2
+    , time                              >= 1.9   && < 1.15
+    , transformers                      >= 0.5   && < 0.7
+    , http-types                        >= 0.12  && < 0.13
+    , wai                               >= 3.2   && < 3.3
+    , warp                              >= 3.3   && < 3.5
+    , atproto-haskell-car
+    , atproto-haskell-crypto
+    , atproto-haskell-identity
+    , atproto-haskell-ipld
+    , atproto-haskell-lex
+    , atproto-haskell-oauth-provider
+    , atproto-haskell-pds
+    , atproto-haskell-repo
+    , atproto-haskell-syntax
+    , atproto-haskell-xrpc
+    , atproto-haskell-xrpc-server
+  hs-source-dirs:   src
+  default-language: Haskell2010
+
+executable atproto-pds-server
+  import:           warnings
+  main-is:          Main.hs
+  build-depends:
+      base                              >= 4.14  && < 5
+    , text                              >= 1.2   && < 2.2
+    , warp                              >= 3.3   && < 3.5
+    , atproto-haskell-crypto
+    , atproto-haskell-pds
+    , atproto-haskell-pds-server
+    , atproto-haskell-syntax
+  hs-source-dirs:   app
+  default-language: Haskell2010
+  ghc-options:      -Wall -threaded
+
+test-suite atproto-pds-server-tests
+  import:           warnings
+  type:             exitcode-stdio-1.0
+  main-is:          Main.hs
+  other-modules:
+      Test.ATProto.PDS.Server
+  build-depends:
+      base                              >= 4.14  && < 5
+    , bytestring                        >= 0.10  && < 0.13
+    , containers                        >= 0.6   && < 0.8
+    , text                              >= 1.2   && < 2.2
+    , http-types                        >= 0.12  && < 0.13
+    , wai                               >= 3.2   && < 3.3
+    , wai-extra                         >= 3.1   && < 3.2
+    , atproto-haskell-car
+    , atproto-haskell-crypto
+    , atproto-haskell-lex
+    , atproto-haskell-pds
+    , atproto-haskell-pds-server
+    , atproto-haskell-syntax
+    , atproto-haskell-xrpc
+    , hedgehog                          >= 1.4   && < 1.8
+  hs-source-dirs:   test
+  default-language: Haskell2010

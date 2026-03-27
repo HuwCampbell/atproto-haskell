@@ -11,6 +11,7 @@ packages:
   atproto-oauth/
   atproto-oauth-provider/
   atproto-pds/
+  atproto-pds-server/
   atproto-repo-verify/
   atproto-repo/
   atproto-service-auth/
