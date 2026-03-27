@@ -7,6 +7,8 @@ import qualified Hedgehog.Range as Range
 import qualified Data.ByteString      as BS
 import qualified Data.ByteString.Char8 as BSC
 import qualified Data.List.NonEmpty   as NE
+import           Data.List.NonEmpty   (NonEmpty)
+
 import qualified Data.Map.Strict      as Map
 import qualified Data.Text            as T
 
@@ -44,6 +46,13 @@ genCidBytes = do
   digest <- Gen.bytes (Range.singleton 32)
   let header = BS.pack [0x01, 0x71, 0x12, 0x20]
   return (CidBytes (header <> digest))
+
+-- | Generate a sorted, unique non-empty list of MST entries.
+genSomeEntries :: Gen (NonEmpty (T.Text, CidBytes))
+genSomeEntries = do
+  n     <- Gen.int (Range.linear 1 100)
+  pairs <- sequence [ (,) <$> genMstKey <*> genCidBytes | _ <- [1..n] ]
+  return $ NE.fromList (Map.toAscList (Map.fromList pairs))
 
 -- | Generate a sorted, unique list of MST entries.
 genEntries :: Gen [(T.Text, CidBytes)]
@@ -232,31 +241,25 @@ prop_insertLookup = property $ do
 -- | 'insert' on a non-empty tree leaves all OTHER keys unchanged.
 prop_insertPreservesOthers :: Property
 prop_insertPreservesOthers = property $ do
-  entries <- forAll (Gen.filter (not . null) genEntries)
-  key     <- forAll genMstKey
-  val     <- forAll genCidBytes
-  case fromList entries of
-    Nothing  -> failure
-    Just mst -> do
-      let mst'   = insert key val mst
-          others = filter (\(k, _) -> k /= key) entries
-      mapM_ (\(k, v) -> lookup k mst' === Just v) others
+  entries   <- forAll genSomeEntries
+  key       <- forAll genMstKey
+  val       <- forAll genCidBytes
+  let mst'   = insert key val (fromNonEmpty entries)
+      others = NE.filter (\(k, _) -> k /= key) entries
+  mapM_ (\(k, v) -> lookup k mst' === Just v) others
 
 -- | Inserting all entries one-by-one into the first entry yields the same
 --   tree as building via 'fromList' (the oracle for structural correctness).
 prop_insertMatchesFromList :: Property
 prop_insertMatchesFromList = property $ do
-  entries <- forAll (Gen.filter (not . null) genEntries)
-  case NE.nonEmpty entries of
-    Nothing -> failure
-    Just ne -> do
-      let (k0, v0) NE.:| rest = ne
-          initial  = singleton k0 v0
-          byInsert = foldr (uncurry insert) initial rest
-      -- Build via fromList (the reference)
-      let ref = fromNonEmpty ne
-      toList byInsert === toList ref
-      mstCid byInsert === mstCid ref
+  entries <- forAll genSomeEntries
+  let (k0, v0) NE.:| rest = entries
+      initial  = singleton k0 v0
+      byInsert = foldr (uncurry insert) initial rest
+  -- Build via fromList (the reference)
+  let ref = fromNonEmpty entries
+  toList byInsert === toList ref
+  mstCid byInsert === mstCid ref
 
 -- | 'insert' matches the naive oracle: toList . insert k v
 --   == insertSorted k v . toList.
@@ -277,15 +280,12 @@ prop_insertOracleRoundTrip = property $ do
 -- | Inserting the same key twice with different values keeps only the last.
 prop_insertIdempotent :: Property
 prop_insertIdempotent = property $ do
-  entries <- forAll (Gen.filter (not . null) genEntries)
+  entries <- forAll genSomeEntries
   key     <- forAll genMstKey
   val1    <- forAll genCidBytes
   val2    <- forAll genCidBytes
-  case fromList entries of
-    Nothing  -> failure
-    Just mst -> do
-      let mst' = insert key val2 (insert key val1 mst)
-      lookup key mst' === Just val2
+  let mst' = insert key val2 (insert key val1 (fromNonEmpty entries))
+  lookup key mst' === Just val2
 
 -- ---------------------------------------------------------------------------
 -- Group

@@ -320,8 +320,8 @@ computeDiff
   :: [(T.Text, CidBytes)]
   -> [(T.Text, CidBytes)]
   -> [WriteDescr]
-computeDiff [] news = map (\(k, v) -> WCreate k v) news
-computeDiff olds [] = map (\(k, v) -> WDelete k v) olds
+computeDiff [] news = map (uncurry WCreate) news
+computeDiff olds [] = map (uncurry WDelete) olds
 computeDiff olds@((ok, ov):ot) news@((nk, nv):nt)
   | ok == nk && ov == nv = computeDiff ot nt
   | ok == nk             = WUpdate ok ov nv : computeDiff ot nt
