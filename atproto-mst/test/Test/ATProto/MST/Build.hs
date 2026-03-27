@@ -6,16 +6,22 @@ import qualified Hedgehog.Gen   as Gen
 import qualified Hedgehog.Range as Range
 import qualified Data.ByteString      as BS
 import qualified Data.ByteString.Char8 as BSC
+import qualified Data.List.NonEmpty   as NE
 import qualified Data.Map.Strict      as Map
 import qualified Data.Text            as T
 
 import ATProto.Car.Cid      (CidBytes (..), parseCidFromBytes)
 import ATProto.Car.Parser   (readCarWithRoot)
 import ATProto.MST.Node     (NodeData (..), TreeEntry (..), decodeNode)
-import ATProto.MST.Encode   (encodeNode, cidForDagCbor)
-import ATProto.MST.Build    (buildMST)
-import ATProto.MST.Get      (get)
-import ATProto.MST.Diff     (mstDiff, WriteDescr (..))
+import ATProto.MST.Encode   (encodeNode)
+import ATProto.MST.Tree
+  ( WriteDescr (..)
+  , fromList, fromNonEmpty, toList, lookup, insert, singleton
+  , mstCid
+  )
+import qualified ATProto.MST.Tree as Tree
+
+import Prelude hiding (lookup)
 
 -- ---------------------------------------------------------------------------
 -- Generators
@@ -42,7 +48,7 @@ genCidBytes = do
 -- | Generate a sorted, unique list of MST entries.
 genEntries :: Gen [(T.Text, CidBytes)]
 genEntries = do
-  n <- Gen.int (Range.linear 0 100)
+  n     <- Gen.int (Range.linear 0 100)
   pairs <- sequence [ (,) <$> genMstKey <*> genCidBytes | _ <- [1..n] ]
   return (Map.toAscList (Map.fromList pairs))
 
@@ -127,59 +133,48 @@ genTreeEntries n prevKey = do
   return (TreeEntry prefixLen suffix val mRight : rest)
 
 -- ---------------------------------------------------------------------------
--- Properties: build round-trips
+-- Properties: build / new Tree API
 -- ---------------------------------------------------------------------------
 
--- | Empty input produces Nothing root and empty block map.
+-- | Empty input produces Nothing.
 prop_buildEmpty :: Property
-prop_buildEmpty = property $ do
-  let (mRoot, blocks) = buildMST []
-  mRoot  === Nothing
-  blocks === Map.empty
+prop_buildEmpty = property $
+  fromList [] === Nothing
 
 -- | Building an MST then diffing from empty returns all entries as
 --   'WCreate' in the original order.
 prop_buildDiffRoundTrip :: Property
 prop_buildDiffRoundTrip = property $ do
   entries <- forAll genEntries
-  case buildMST entries of
-    (Nothing, _) -> entries === []
-    (Just root, bmap) -> do
-      case mstDiff bmap Nothing root of
-        Left err -> do
-          annotate (show err)
-          failure
-        Right writes -> do
-          let recovered = [ (wdKey w, wdCid w) | w <- writes ]
-          recovered === entries
+  case fromList entries of
+    Nothing  -> entries === []
+    Just mst -> do
+      let writes = Tree.diff Nothing mst
+      let recovered = [ (wdKey w, wdCid w) | w <- writes ]
+      recovered === entries
 
--- | Every key inserted into the MST can be retrieved with 'get'.
+-- | Every key inserted into the MST can be retrieved with 'lookup'.
 prop_buildGetRoundTrip :: Property
 prop_buildGetRoundTrip = property $ do
   entries <- forAll genEntries
-  case buildMST entries of
-    (Nothing, _) -> entries === []
-    (Just root, bmap) ->
-      mapM_ (checkGet bmap root) entries
+  case fromList entries of
+    Nothing  -> entries === []
+    Just mst ->
+      mapM_ (checkLookup mst) entries
   where
-    checkGet bmap root (key, val) =
-      case get bmap root key of
-        Left err       -> do
-          annotate (show err)
-          failure
-        Right Nothing  -> do
+    checkLookup mst (key, val) =
+      case lookup key mst of
+        Nothing -> do
           annotate ("key not found: " ++ T.unpack key)
           failure
-        Right (Just v) -> v === val
+        Just v  -> v === val
 
--- | Building an MST from entries, diffing to empty, and rebuilding
---   produces the same root CID (deterministic construction).
+-- | Building an MST from the same entries twice produces the same root CID
+--   (deterministic construction).
 prop_buildDeterministic :: Property
 prop_buildDeterministic = property $ do
   entries <- forAll genEntries
-  let (root1, _) = buildMST entries
-      (root2, _) = buildMST entries
-  root1 === root2
+  fmap mstCid (fromList entries) === fmap mstCid (fromList entries)
 
 -- ---------------------------------------------------------------------------
 -- Properties: known test vector
@@ -195,30 +190,102 @@ prop_knownSingleEntry = property $ do
       failure
     Right (expectedRoot, _) -> do
       let key = "com.example.record/3jqfcqzm3fn2j" :: T.Text
-          (mRoot, _) = buildMST [(key, parsedLeafCid)]
-      case mRoot of
-        Nothing   -> do
-          annotate "buildMST returned Nothing"
+      case fromList [(key, parsedLeafCid)] of
+        Nothing  -> do
+          annotate "fromList returned Nothing"
           failure
-        Just root -> root === expectedRoot
+        Just mst -> mstCid mst === expectedRoot
 
 -- | A missing key returns Nothing even in a non-empty tree.
 prop_buildGetMissing :: Property
 prop_buildGetMissing = property $ do
   entries <- forAll (Gen.filter (not . null) genEntries)
-  case buildMST entries of
-    (Nothing, _) -> failure
-    (Just root, bmap) -> do
-      -- Use a key we know is not in the entry list.
+  case fromList entries of
+    Nothing  -> failure
+    Just mst -> do
       let missingKey = "zzz.missing/nothere"
-      case get bmap root missingKey of
-        Left err      -> do
-          annotate (show err)
-          failure
-        Right Nothing -> success
-        Right (Just _) -> do
-          annotate "unexpected: found a value for missing key"
-          failure
+      lookup missingKey mst === Nothing
+
+-- ---------------------------------------------------------------------------
+-- Properties: insert
+-- ---------------------------------------------------------------------------
+
+-- Oracle: what should insert give us?
+-- Insert (key, val) into a sorted list, replacing any existing entry.
+insertSorted :: T.Text -> CidBytes -> [(T.Text, CidBytes)] -> [(T.Text, CidBytes)]
+insertSorted k v entries =
+  Map.toAscList (Map.insert k v (Map.fromList entries))
+
+-- | After 'insert', 'lookup' finds the new value.
+prop_insertLookup :: Property
+prop_insertLookup = property $ do
+  entries <- forAll genEntries
+  key     <- forAll genMstKey
+  val     <- forAll genCidBytes
+  -- Build initial tree (or use a single-entry tree if entries is empty)
+  let base = case fromList entries of
+               Just mst -> mst
+               Nothing  -> singleton key val
+  let mst' = insert key val base
+  lookup key mst' === Just val
+
+-- | 'insert' on a non-empty tree leaves all OTHER keys unchanged.
+prop_insertPreservesOthers :: Property
+prop_insertPreservesOthers = property $ do
+  entries <- forAll (Gen.filter (not . null) genEntries)
+  key     <- forAll genMstKey
+  val     <- forAll genCidBytes
+  case fromList entries of
+    Nothing  -> failure
+    Just mst -> do
+      let mst'   = insert key val mst
+          others = filter (\(k, _) -> k /= key) entries
+      mapM_ (\(k, v) -> lookup k mst' === Just v) others
+
+-- | Inserting all entries one-by-one into the first entry yields the same
+--   tree as building via 'fromList' (the oracle for structural correctness).
+prop_insertMatchesFromList :: Property
+prop_insertMatchesFromList = property $ do
+  entries <- forAll (Gen.filter (not . null) genEntries)
+  case NE.nonEmpty entries of
+    Nothing -> failure
+    Just ne -> do
+      let (k0, v0) NE.:| rest = ne
+          initial  = singleton k0 v0
+          byInsert = foldr (uncurry insert) initial rest
+      -- Build via fromList (the reference)
+      let ref = fromNonEmpty ne
+      toList byInsert === toList ref
+      mstCid byInsert === mstCid ref
+
+-- | 'insert' matches the naive oracle: toList . insert k v
+--   == insertSorted k v . toList.
+prop_insertOracleRoundTrip :: Property
+prop_insertOracleRoundTrip = property $ do
+  entries <- forAll genEntries
+  key     <- forAll genMstKey
+  val     <- forAll genCidBytes
+  let expected = insertSorted key val entries
+  case fromList entries of
+    Nothing ->
+      -- Empty tree: build from the single pair
+      toList (singleton key val) === expected
+    Just mst -> do
+      let mst' = insert key val mst
+      toList mst' === expected
+
+-- | Inserting the same key twice with different values keeps only the last.
+prop_insertIdempotent :: Property
+prop_insertIdempotent = property $ do
+  entries <- forAll (Gen.filter (not . null) genEntries)
+  key     <- forAll genMstKey
+  val1    <- forAll genCidBytes
+  val2    <- forAll genCidBytes
+  case fromList entries of
+    Nothing  -> failure
+    Just mst -> do
+      let mst' = insert key val2 (insert key val1 mst)
+      lookup key mst' === Just val2
 
 -- ---------------------------------------------------------------------------
 -- Group
@@ -226,11 +293,16 @@ prop_buildGetMissing = property $ do
 
 tests :: Group
 tests = Group "ATProto.MST.Build"
-  [ ("encode/decode round-trip",           prop_encodeDecodeRoundTrip)
-  , ("buildMST empty input",              prop_buildEmpty)
-  , ("build then diff recovers entries",   prop_buildDiffRoundTrip)
-  , ("build then get finds every key",     prop_buildGetRoundTrip)
-  , ("build is deterministic",             prop_buildDeterministic)
-  , ("known single-entry vector",          prop_knownSingleEntry)
-  , ("get missing key returns Nothing",    prop_buildGetMissing)
+  [ ("encode/decode round-trip",                prop_encodeDecodeRoundTrip)
+  , ("fromList empty input is Nothing",         prop_buildEmpty)
+  , ("build then diff recovers entries",        prop_buildDiffRoundTrip)
+  , ("build then lookup finds every key",       prop_buildGetRoundTrip)
+  , ("build is deterministic",                  prop_buildDeterministic)
+  , ("known single-entry vector",               prop_knownSingleEntry)
+  , ("lookup missing key returns Nothing",      prop_buildGetMissing)
+  , ("insert then lookup finds new value",      prop_insertLookup)
+  , ("insert preserves other keys",             prop_insertPreservesOthers)
+  , ("insert one-by-one matches fromList",      prop_insertMatchesFromList)
+  , ("insert matches oracle toList",            prop_insertOracleRoundTrip)
+  , ("double insert keeps last value",          prop_insertIdempotent)
   ]
