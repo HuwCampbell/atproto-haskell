@@ -6,6 +6,7 @@ import qualified Hedgehog.Gen   as Gen
 import qualified Hedgehog.Range as Range
 import qualified Data.ByteString      as BS
 import qualified Data.ByteString.Char8 as BSC
+import qualified Data.List.NonEmpty   as NE
 import qualified Data.Map.Strict      as Map
 import qualified Data.Text            as T
 
@@ -15,7 +16,7 @@ import ATProto.MST.Node     (NodeData (..), TreeEntry (..), decodeNode)
 import ATProto.MST.Encode   (encodeNode)
 import ATProto.MST.Tree
   ( WriteDescr (..)
-  , fromList, toList, lookup, insert, singleton
+  , fromList, fromNonEmpty, toList, lookup, insert, singleton
   , mstCid
   )
 import qualified ATProto.MST.Tree as Tree
@@ -224,9 +225,7 @@ prop_insertLookup = property $ do
   -- Build initial tree (or use a single-entry tree if entries is empty)
   let base = case fromList entries of
                Just mst -> mst
-               Nothing  -> case fromList [(key, val)] of
-                             Just mst -> mst
-                             Nothing  -> error "fromList returned Nothing for non-empty input"
+               Nothing  -> singleton key val
   let mst' = insert key val base
   lookup key mst' === Just val
 
@@ -247,14 +246,15 @@ prop_insertPreservesOthers = property $ do
 --   tree as building via 'fromList' (the oracle for structural correctness).
 prop_insertMatchesFromList :: Property
 prop_insertMatchesFromList = property $ do
-  entries@((k0, v0) : rest) <- forAll (Gen.filter (not . null) genEntries)
-  let initial  = singleton k0 v0
-  let byInsert = foldr (uncurry insert) initial rest
-  -- Build via fromList (the reference)
-  case fromList entries of
-    Nothing  -> failure
-    Just ref -> do
-      -- Compare by traversal (forces all thunks, tests structural equality)
+  entries <- forAll (Gen.filter (not . null) genEntries)
+  case NE.nonEmpty entries of
+    Nothing -> failure
+    Just ne -> do
+      let (k0, v0) NE.:| rest = ne
+          initial  = singleton k0 v0
+          byInsert = foldr (uncurry insert) initial rest
+      -- Build via fromList (the reference)
+      let ref = fromNonEmpty ne
       toList byInsert === toList ref
       mstCid byInsert === mstCid ref
 
@@ -269,9 +269,7 @@ prop_insertOracleRoundTrip = property $ do
   case fromList entries of
     Nothing ->
       -- Empty tree: build from the single pair
-      case fromList [(key, val)] of
-        Nothing  -> failure
-        Just mst -> toList mst === expected
+      toList (singleton key val) === expected
     Just mst -> do
       let mst' = insert key val mst
       toList mst' === expected

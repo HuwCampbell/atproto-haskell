@@ -190,11 +190,8 @@ buildTreeEntries (SubTree _ : rest) prevKey =
 -- Construction
 -- ---------------------------------------------------------------------------
 
--- | Build an MST from a single value.
---
--- The keys must be in ascending byte order with no duplicates.  Returns
--- 'Nothing' for an empty input list.
-singleton :: T.Text  -> CidBytes -> MST
+-- | Build an MST containing exactly one key-value pair.
+singleton :: T.Text -> CidBytes -> MST
 singleton key val =
   let layer = leadingZerosOnHash (TE.encodeUtf8 key)
   in buildAtLayer (NE.singleton (key, val, layer)) layer
