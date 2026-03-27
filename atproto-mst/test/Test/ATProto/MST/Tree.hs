@@ -1,4 +1,4 @@
--- | MST tree tests: get, diff, and single-entry tree.
+-- | MST tree tests: lookup, diff, verify, and round-trip.
 module Test.ATProto.MST.Tree (tests) where
 
 import Hedgehog
@@ -6,9 +6,14 @@ import qualified Data.ByteString as BS
 
 import ATProto.Car.Cid      (CidBytes (..), parseCidFromBytes)
 import ATProto.Car.Parser   (readCarWithRoot)
-import ATProto.MST.Get      (get)
-import ATProto.MST.Diff     (mstDiff, WriteDescr (..))
-import ATProto.MST.Verify   (RecordOp (..), verifyProofs)
+import ATProto.MST.Tree
+  ( MST, NodeEntry (..), WriteDescr (..), RecordOp (..)
+  , fromBlockMap, toBlockMap
+  , lookup, toList, verifyProofs, mstCid
+  )
+import qualified ATProto.MST.Tree as Tree
+
+import Prelude hiding (lookup)
 
 -- ---------------------------------------------------------------------------
 -- Fixtures
@@ -59,54 +64,55 @@ parsedLeafCid = case parseCidFromBytes leafCidBytes 0 of
 -- Properties
 -- ---------------------------------------------------------------------------
 
--- | 'get' returns the correct CID for a present key.
+-- | 'lookup' returns the correct CID for a present key.
 prop_getPresent :: Property
 prop_getPresent = property $ do
   case readCarWithRoot singleEntryCar of
-    Left err           -> do
+    Left err              -> do
       annotate (show err)
       failure
-    Right (root, bmap) -> do
-      let key = "com.example.record/3jqfcqzm3fn2j"
-      case get bmap root key of
-        Left err       -> do
+    Right (root, blockMap) -> do
+      case fromBlockMap blockMap root of
+        Left err  -> do
           annotate (show err)
           failure
-        Right (Just cid) -> cid === parsedLeafCid
-        Right Nothing    -> do
-          annotate "key not found"
-          failure
+        Right mst -> do
+          let key = "com.example.record/3jqfcqzm3fn2j"
+          case lookup key mst of
+            Nothing  -> do
+              annotate "key not found"
+              failure
+            Just cid -> cid === parsedLeafCid
 
--- | 'get' returns Nothing for a key that is not in the tree.
+-- | 'lookup' returns Nothing for a key that is not in the tree.
 prop_getMissing :: Property
 prop_getMissing = property $ do
   case readCarWithRoot singleEntryCar of
-    Left err           -> do
+    Left err              -> do
       annotate (show err)
       failure
-    Right (root, bmap) ->
-      case get bmap root "com.example.record/does-not-exist" of
-        Left err      -> do
+    Right (root, blockMap) ->
+      case fromBlockMap blockMap root of
+        Left err  -> do
           annotate (show err)
           failure
-        Right Nothing -> success
-        Right (Just _) -> do
-          annotate "unexpected: found a value"
-          failure
+        Right mst ->
+          lookup "com.example.record/does-not-exist" mst === Nothing
 
--- | 'mstDiff' from empty to single-entry tree produces one WCreate.
+-- | 'diff' from empty to single-entry tree produces one WCreate.
 prop_diffEmptyToSingle :: Property
 prop_diffEmptyToSingle = property $ do
   case readCarWithRoot singleEntryCar of
-    Left err           -> do
+    Left err              -> do
       annotate (show err)
       failure
-    Right (root, bmap) ->
-      case mstDiff bmap Nothing root of
-        Left err     -> do
+    Right (root, blockMap) -> do
+      case fromBlockMap blockMap root of
+        Left err  -> do
           annotate (show err)
           failure
-        Right writes -> do
+        Right mst -> do
+          let writes = Tree.diff Nothing mst
           length writes === 1
           case writes of
             [WCreate k c] -> do
@@ -118,41 +124,73 @@ prop_diffEmptyToSingle = property $ do
 prop_verifyProofsOk :: Property
 prop_verifyProofsOk = property $ do
   case readCarWithRoot singleEntryCar of
-    Left err           -> do
+    Left err              -> do
       annotate (show err)
       failure
-    Right (root, bmap) -> do
-      let op = RecordOp
-            { ropCollection = "com.example.record"
-            , ropRkey       = "3jqfcqzm3fn2j"
-            , ropCid        = Just parsedLeafCid
-            }
-      case verifyProofs bmap root [op] of
-        Left err -> do
+    Right (root, blockMap) -> do
+      case fromBlockMap blockMap root of
+        Left err  -> do
           annotate (show err)
           failure
-        Right () -> success
+        Right mst -> do
+          let op = RecordOp
+                { ropCollection = "com.example.record"
+                , ropRkey       = "3jqfcqzm3fn2j"
+                , ropCid        = Just parsedLeafCid
+                }
+          case verifyProofs mst [op] of
+            Left err -> do
+              annotate (show err)
+              failure
+            Right () -> success
 
 -- | 'verifyProofs' fails when the claimed CID is wrong.
 prop_verifyProofsBadCid :: Property
 prop_verifyProofsBadCid = property $ do
   case readCarWithRoot singleEntryCar of
-    Left err           -> do
+    Left err              -> do
       annotate (show err)
       failure
-    Right (root, bmap) -> do
-      -- Use the root CID as a wrong value CID
-      let wrongCid = root
-          op = RecordOp
-                { ropCollection = "com.example.record"
-                , ropRkey       = "3jqfcqzm3fn2j"
-                , ropCid        = Just wrongCid
-                }
-      case verifyProofs bmap root [op] of
-        Left _  -> success
-        Right _ -> do
-          annotate "verification should have failed"
+    Right (root, blockMap) -> do
+      case fromBlockMap blockMap root of
+        Left err  -> do
+          annotate (show err)
           failure
+        Right mst -> do
+          let wrongCid = root
+              op = RecordOp
+                    { ropCollection = "com.example.record"
+                    , ropRkey       = "3jqfcqzm3fn2j"
+                    , ropCid        = Just wrongCid
+                    }
+          case verifyProofs mst [op] of
+            Left _  -> success
+            Right _ -> do
+              annotate "verification should have failed"
+              failure
+
+-- | 'fromBlockMap' after 'toBlockMap' is identity (modulo forcing all thunks).
+prop_roundTripBlockMap :: Property
+prop_roundTripBlockMap = property $ do
+  case readCarWithRoot singleEntryCar of
+    Left err              -> do
+      annotate (show err)
+      failure
+    Right (root, blockMap) -> do
+      case fromBlockMap blockMap root of
+        Left err  -> do
+          annotate (show err)
+          failure
+        Right mst -> do
+          let bmap' = toBlockMap mst
+          case fromBlockMap bmap' (mstCid mst) of
+            Left err   -> do
+              annotate (show err)
+              failure
+            Right mst' -> do
+              -- Verify round-trip by comparing leaves (forces all thunks)
+              toList mst' === toList mst
+              mstCid mst' === mstCid mst
 
 -- ---------------------------------------------------------------------------
 -- Group
@@ -160,9 +198,10 @@ prop_verifyProofsBadCid = property $ do
 
 tests :: Group
 tests = Group "ATProto.MST.Tree"
-  [ ("get returns correct CID for present key",  prop_getPresent)
-  , ("get returns Nothing for missing key",       prop_getMissing)
-  , ("diff empty to single entry = 1 WCreate",   prop_diffEmptyToSingle)
-  , ("verifyProofs succeeds when ops match",      prop_verifyProofsOk)
-  , ("verifyProofs fails on CID mismatch",        prop_verifyProofsBadCid)
+  [ ("lookup returns correct CID for present key",   prop_getPresent)
+  , ("lookup returns Nothing for missing key",        prop_getMissing)
+  , ("diff empty to single entry = 1 WCreate",        prop_diffEmptyToSingle)
+  , ("verifyProofs succeeds when ops match",          prop_verifyProofsOk)
+  , ("verifyProofs fails on CID mismatch",            prop_verifyProofsBadCid)
+  , ("fromBlockMap . toBlockMap is identity",         prop_roundTripBlockMap)
   ]

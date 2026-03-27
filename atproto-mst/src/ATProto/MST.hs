@@ -8,21 +8,12 @@ module ATProto.MST
   , module ATProto.MST.Encode
     -- * Layer computation
   , module ATProto.MST.Layer
-    -- * Tree construction
-  , module ATProto.MST.Build
-    -- * Point lookup
-  , module ATProto.MST.Get
-    -- * Tree diff
-  , module ATProto.MST.Diff
-    -- * Proof verification
-  , module ATProto.MST.Verify
+    -- * Primary in-memory MST type and pure API
+  , module ATProto.MST.Tree
   ) where
 
 import ATProto.MST.Types
 import ATProto.MST.Node
 import ATProto.MST.Encode
 import ATProto.MST.Layer
-import ATProto.MST.Build
-import ATProto.MST.Get
-import ATProto.MST.Diff
-import ATProto.MST.Verify
+import ATProto.MST.Tree

@@ -13,9 +13,14 @@ import ATProto.Car.Cid      (CidBytes (..), parseCidFromBytes)
 import ATProto.Car.Parser   (readCarWithRoot)
 import ATProto.MST.Node     (NodeData (..), TreeEntry (..), decodeNode)
 import ATProto.MST.Encode   (encodeNode, cidForDagCbor)
-import ATProto.MST.Build    (buildMST)
-import ATProto.MST.Get      (get)
-import ATProto.MST.Diff     (mstDiff, WriteDescr (..))
+import ATProto.MST.Tree
+  ( MST, NodeEntry (..), WriteDescr (..)
+  , fromList, toList, lookup, member
+  , mstCid
+  )
+import qualified ATProto.MST.Tree as Tree
+
+import Prelude hiding (lookup)
 
 -- ---------------------------------------------------------------------------
 -- Generators
@@ -127,59 +132,48 @@ genTreeEntries n prevKey = do
   return (TreeEntry prefixLen suffix val mRight : rest)
 
 -- ---------------------------------------------------------------------------
--- Properties: build round-trips
+-- Properties: build / new Tree API
 -- ---------------------------------------------------------------------------
 
--- | Empty input produces Nothing root and empty block map.
+-- | Empty input produces Nothing.
 prop_buildEmpty :: Property
-prop_buildEmpty = property $ do
-  let (mRoot, blocks) = buildMST []
-  mRoot  === Nothing
-  blocks === Map.empty
+prop_buildEmpty = property $
+  fromList [] === Nothing
 
 -- | Building an MST then diffing from empty returns all entries as
 --   'WCreate' in the original order.
 prop_buildDiffRoundTrip :: Property
 prop_buildDiffRoundTrip = property $ do
   entries <- forAll genEntries
-  case buildMST entries of
-    (Nothing, _) -> entries === []
-    (Just root, bmap) -> do
-      case mstDiff bmap Nothing root of
-        Left err -> do
-          annotate (show err)
-          failure
-        Right writes -> do
-          let recovered = [ (wdKey w, wdCid w) | w <- writes ]
-          recovered === entries
+  case fromList entries of
+    Nothing  -> entries === []
+    Just mst -> do
+      let writes = Tree.diff Nothing mst
+      let recovered = [ (wdKey w, wdCid w) | w <- writes ]
+      recovered === entries
 
--- | Every key inserted into the MST can be retrieved with 'get'.
+-- | Every key inserted into the MST can be retrieved with 'lookup'.
 prop_buildGetRoundTrip :: Property
 prop_buildGetRoundTrip = property $ do
   entries <- forAll genEntries
-  case buildMST entries of
-    (Nothing, _) -> entries === []
-    (Just root, bmap) ->
-      mapM_ (checkGet bmap root) entries
+  case fromList entries of
+    Nothing  -> entries === []
+    Just mst ->
+      mapM_ (checkLookup mst) entries
   where
-    checkGet bmap root (key, val) =
-      case get bmap root key of
-        Left err       -> do
-          annotate (show err)
-          failure
-        Right Nothing  -> do
+    checkLookup mst (key, val) =
+      case lookup key mst of
+        Nothing -> do
           annotate ("key not found: " ++ T.unpack key)
           failure
-        Right (Just v) -> v === val
+        Just v  -> v === val
 
--- | Building an MST from entries, diffing to empty, and rebuilding
---   produces the same root CID (deterministic construction).
+-- | Building an MST from the same entries twice produces the same root CID
+--   (deterministic construction).
 prop_buildDeterministic :: Property
 prop_buildDeterministic = property $ do
   entries <- forAll genEntries
-  let (root1, _) = buildMST entries
-      (root2, _) = buildMST entries
-  root1 === root2
+  fmap mstCid (fromList entries) === fmap mstCid (fromList entries)
 
 -- ---------------------------------------------------------------------------
 -- Properties: known test vector
@@ -195,30 +189,21 @@ prop_knownSingleEntry = property $ do
       failure
     Right (expectedRoot, _) -> do
       let key = "com.example.record/3jqfcqzm3fn2j" :: T.Text
-          (mRoot, _) = buildMST [(key, parsedLeafCid)]
-      case mRoot of
-        Nothing   -> do
-          annotate "buildMST returned Nothing"
+      case fromList [(key, parsedLeafCid)] of
+        Nothing  -> do
+          annotate "fromList returned Nothing"
           failure
-        Just root -> root === expectedRoot
+        Just mst -> mstCid mst === expectedRoot
 
 -- | A missing key returns Nothing even in a non-empty tree.
 prop_buildGetMissing :: Property
 prop_buildGetMissing = property $ do
   entries <- forAll (Gen.filter (not . null) genEntries)
-  case buildMST entries of
-    (Nothing, _) -> failure
-    (Just root, bmap) -> do
-      -- Use a key we know is not in the entry list.
+  case fromList entries of
+    Nothing  -> failure
+    Just mst -> do
       let missingKey = "zzz.missing/nothere"
-      case get bmap root missingKey of
-        Left err      -> do
-          annotate (show err)
-          failure
-        Right Nothing -> success
-        Right (Just _) -> do
-          annotate "unexpected: found a value for missing key"
-          failure
+      lookup missingKey mst === Nothing
 
 -- ---------------------------------------------------------------------------
 -- Group
@@ -227,10 +212,10 @@ prop_buildGetMissing = property $ do
 tests :: Group
 tests = Group "ATProto.MST.Build"
   [ ("encode/decode round-trip",           prop_encodeDecodeRoundTrip)
-  , ("buildMST empty input",              prop_buildEmpty)
+  , ("fromList empty input is Nothing",    prop_buildEmpty)
   , ("build then diff recovers entries",   prop_buildDiffRoundTrip)
-  , ("build then get finds every key",     prop_buildGetRoundTrip)
+  , ("build then lookup finds every key",  prop_buildGetRoundTrip)
   , ("build is deterministic",             prop_buildDeterministic)
   , ("known single-entry vector",          prop_knownSingleEntry)
-  , ("get missing key returns Nothing",    prop_buildGetMissing)
+  , ("lookup missing key returns Nothing", prop_buildGetMissing)
   ]

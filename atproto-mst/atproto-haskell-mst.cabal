@@ -26,6 +26,7 @@ library
       ATProto.MST.Node
       ATProto.MST.Encode
       ATProto.MST.Layer
+      ATProto.MST.Tree
       ATProto.MST.Build
       ATProto.MST.Get
       ATProto.MST.Diff
