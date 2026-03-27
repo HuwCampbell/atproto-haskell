@@ -21,6 +21,8 @@ module ATProto.MST.Tree
   , toBlockMap
     -- * Construction
   , fromList
+    -- * Mutation
+  , insert
     -- * Querying
   , rootCid
   , toList
@@ -338,6 +340,141 @@ verifyProofs mst ops = mapM_ checkOp ops
             (T.pack ("expected key present but absent: " ++ T.unpack key)))
         (Just _,  Nothing)                -> Left (MstDecodeError
             (T.pack ("expected key absent but present: " ++ T.unpack key)))
+
+-- ---------------------------------------------------------------------------
+-- Mutation
+-- ---------------------------------------------------------------------------
+
+-- | Insert or replace a key-value pair in the MST.
+--
+-- If @key@ is already present its value is replaced; otherwise a new leaf is
+-- created at the correct layer.  The returned tree has a freshly-computed
+-- root CID.
+--
+-- The operation is O(log n) in tree height for simple insertions (key lands
+-- in an empty slot), and at most O(m) when an existing subtree of size @m@
+-- must be split to make room for a leaf at the current node's layer.
+insert :: T.Text -> CidBytes -> MST -> MST
+insert key val mst =
+  let keyLayer = leadingZerosOnHash (TE.encodeUtf8 key)
+  in insertAtLayer keyLayer key val mst
+
+-- ---------------------------------------------------------------------------
+-- Insert internals
+-- ---------------------------------------------------------------------------
+
+-- | Dispatch insertion based on key layer vs node layer.
+insertAtLayer :: Int -> T.Text -> CidBytes -> MST -> MST
+insertAtLayer keyLayer key val mst =
+  let layer = nodeLayer mst
+  in case compare keyLayer layer of
+       GT -> -- key's layer is above the current root; add a spine node on top
+             insertAtLayer keyLayer key val (makeMST [SubTree mst])
+       EQ -> makeMST (insertLeafAtLevel key val (mstEntries mst))
+       LT -> makeMST (descendInsert keyLayer key val layer (mstEntries mst))
+
+-- | Insert a leaf at the current level.
+--
+-- Scans the entry list left-to-right to find the sorted position.  If the
+-- position falls inside an existing subtree, that subtree is split at @key@
+-- and the two halves flank the new leaf.
+insertLeafAtLevel :: T.Text -> CidBytes -> [NodeEntry] -> [NodeEntry]
+insertLeafAtLevel key val = go
+  where
+    newLeaf = Leaf key val
+
+    go [] = [newLeaf]
+
+    go (Leaf k v : rest)
+      | key <  k  = newLeaf : Leaf k v : rest   -- insert before
+      | key == k  = newLeaf : rest               -- replace
+      | otherwise = Leaf k v : go rest           -- keep scanning
+
+    go (sub@(SubTree mst) : rest) =
+      case firstLeafKey rest of
+        -- The next leaf key tells us whether the new key is to the right
+        -- of this subtree; if so, skip past it.
+        Just nk | key >= nk -> sub : go rest
+        _ ->
+          -- The new key belongs at or before the next leaf, so it may
+          -- land inside this subtree.  Split the subtree at `key`.
+          let (mLeft, mRight) = splitAtKey key mst
+          in  maybe [] (\l -> [SubTree l]) mLeft
+              ++ [newLeaf]
+              ++ maybe [] (\r -> [SubTree r]) mRight
+              ++ rest
+
+-- | Descend into the appropriate subtree, creating one when none exists.
+--
+-- Called when @keyLayer < layer@ (the new key belongs below the current node).
+descendInsert :: Int -> T.Text -> CidBytes -> Int -> [NodeEntry] -> [NodeEntry]
+descendInsert keyLayer key val layer = go
+  where
+    -- A fresh subtree at (layer-1) containing just the new key.
+    newSub = insertSingleKey (layer - 1) key val keyLayer
+
+    go [] = [SubTree newSub]
+
+    go (Leaf k v : rest)
+      | key < k   = SubTree newSub : Leaf k v : rest  -- insert subtree before
+      | otherwise = Leaf k v : go rest                 -- keep scanning
+
+    go (SubTree sub : rest) =
+      case firstLeafKey rest of
+        Just nk | key >= nk -> SubTree sub : go rest  -- key is to the right
+        _ -> SubTree (insertAtLayer keyLayer key val sub) : rest  -- recurse
+
+-- | Build a subtree rooted at @targetLayer@ containing exactly one leaf at
+-- @keyLayer@, creating spine nodes in between as required.
+insertSingleKey :: Int -> T.Text -> CidBytes -> Int -> MST
+insertSingleKey targetLayer key val keyLayer
+  | targetLayer == keyLayer = makeMST [Leaf key val]
+  | targetLayer >  keyLayer = makeMST [SubTree (insertSingleKey (targetLayer - 1) key val keyLayer)]
+  | otherwise               = makeMST [Leaf key val]  -- shouldn't arise in a valid tree
+
+-- | Split an MST at @key@: return the subtree of entries strictly before
+-- @key@ and the subtree of entries strictly after @key@.
+--
+-- Both returned subtrees are wrapped back to the same layer as the input MST
+-- so that the invariant (subtrees in a node are exactly one layer below the
+-- node) is preserved.
+splitAtKey :: T.Text -> MST -> (Maybe MST, Maybe MST)
+splitAtKey key mst =
+  let targetLayer = nodeLayer mst
+      (ls, rs)    = span (\(k, _) -> k < key) (toList mst)
+      wrapUp      = fmap (wrapToLayer targetLayer) . fromList
+  in (wrapUp ls, wrapUp rs)
+
+-- | Wrap an MST in spine nodes (each containing only a left subtree) until
+-- its root is at @targetLayer@.
+wrapToLayer :: Int -> MST -> MST
+wrapToLayer targetLayer mst
+  | nodeLayer mst >= targetLayer = mst
+  | otherwise                    = wrapToLayer targetLayer (makeMST [SubTree mst])
+
+-- | Compute the layer of an MST node.
+--
+-- The layer of a node equals the leading-zero count of any of its leaf keys;
+-- all leaves in a node are at the same layer.  For pure spine nodes (no
+-- leaves at this level) the layer is derived recursively from the single
+-- subtree child.
+nodeLayer :: MST -> Int
+nodeLayer (MST _ entries) = go entries
+  where
+    go []                    = 0   -- degenerate; shouldn't arise in practice
+    go (Leaf k _ : _)        = leadingZerosOnHash (TE.encodeUtf8 k)
+    go (SubTree sub : rest)  =
+      case firstLeafKey rest of
+        Just k  -> leadingZerosOnHash (TE.encodeUtf8 k)  -- a sibling leaf tells us the layer
+        Nothing -> nodeLayer sub + 1                      -- spine node: one above the child
+
+-- | Build an MST node from a flat entry list, computing the memoised CID.
+makeMST :: [NodeEntry] -> MST
+makeMST entries =
+  let nd    = toNodeData entries
+      bytes = encodeNode nd
+      cid   = cidForDagCbor bytes
+  in MST cid entries
 
 -- ---------------------------------------------------------------------------
 -- Helpers
