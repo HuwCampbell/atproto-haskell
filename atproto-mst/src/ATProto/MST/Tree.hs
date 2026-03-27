@@ -255,6 +255,7 @@ groupByLayer ((key, val, _) : rest) layer =
 -- ---------------------------------------------------------------------------
 
 -- | Return the root CID of the MST (the memoised hash of the root node).
+-- Equivalent to the 'mstCid' record field.
 rootCid :: MST -> CidBytes
 rootCid = mstCid
 
