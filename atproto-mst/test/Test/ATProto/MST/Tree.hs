@@ -7,7 +7,7 @@ import qualified Data.ByteString as BS
 import ATProto.Car.Cid      (CidBytes (..), parseCidFromBytes)
 import ATProto.Car.Parser   (readCarWithRoot)
 import ATProto.MST.Tree
-  ( MST, NodeEntry (..), WriteDescr (..), RecordOp (..)
+  ( WriteDescr (..), RecordOp (..)
   , fromBlockMap, toBlockMap
   , lookup, toList, verifyProofs, mstCid
   )

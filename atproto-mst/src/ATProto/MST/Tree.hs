@@ -20,8 +20,9 @@ module ATProto.MST.Tree
   , fromBlockMap
   , toBlockMap
     -- * Construction
+  , singleton
+  , fromNonEmpty
   , fromList
-    -- * Mutation
   , insert
     -- * Querying
   , rootCid
@@ -37,6 +38,7 @@ module ATProto.MST.Tree
 import Prelude hiding (lookup)
 
 import qualified Data.ByteString      as BS
+import qualified Data.List.NonEmpty   as NE
 import qualified Data.Map.Strict      as Map
 import qualified Data.Text            as T
 import qualified Data.Text.Encoding   as TE
@@ -188,29 +190,41 @@ buildTreeEntries (SubTree _ : rest) prevKey =
 -- Construction
 -- ---------------------------------------------------------------------------
 
+-- | Build an MST from a single value.
+--
+-- The keys must be in ascending byte order with no duplicates.  Returns
+-- 'Nothing' for an empty input list.
+singleton :: T.Text  -> CidBytes -> MST
+singleton key val =
+  let layer = leadingZerosOnHash (TE.encodeUtf8 key)
+  in buildAtLayer (NE.singleton (key, val, layer)) layer
+
 -- | Build an MST from a sorted list of @(key, value CID)@ pairs.
 --
 -- The keys must be in ascending byte order with no duplicates.  Returns
 -- 'Nothing' for an empty input list.
 fromList :: [(T.Text, CidBytes)] -> Maybe MST
-fromList [] = Nothing
-fromList entries =
-  let withLayers = [ (key, val, leadingZerosOnHash (TE.encodeUtf8 key))
-                   | (key, val) <- entries ]
-      maxLayer   = maximum [ l | (_, _, l) <- withLayers ]
+fromList = fmap fromNonEmpty . NE.nonEmpty
+
+-- | Build an MST from a sorted non-empty list of @(key, value CID)@ pairs.
+--
+-- The keys must be in ascending byte order with no duplicates.
+fromNonEmpty :: NE.NonEmpty (T.Text, CidBytes) -> MST
+fromNonEmpty entries =
+  let withLayers = (\(key, val) -> (key, val, leadingZerosOnHash (TE.encodeUtf8 key))) <$> entries
+      maxLayer   = maximum ((\(_, _, l) -> l) <$> withLayers)
   in buildAtLayer withLayers maxLayer
 
 -- | Build a single MST node at the given layer.
-buildAtLayer :: [(T.Text, CidBytes, Int)] -> Int -> Maybe MST
-buildAtLayer [] _ = Nothing
+buildAtLayer :: NE.NonEmpty (T.Text, CidBytes, Int) -> Int -> MST
 buildAtLayer entries layer =
   let (leftGroup, groups) = splitByLayer entries layer
-      mLeft               = buildAtLayer leftGroup (layer - 1)
+      mLeft               = (\ls -> buildAtLayer ls (layer - 1)) <$> NE.nonEmpty leftGroup
       nodeEntries_        = buildNodeEntries mLeft groups layer
       nd                  = toNodeData nodeEntries_
       bytes               = encodeNode nd
       nodeCid             = cidForDagCbor bytes
-  in Just (MST nodeCid nodeEntries_)
+  in MST nodeCid nodeEntries_
 
 -- | Build the flat 'NodeEntry' list for a node at @layer@.
 buildNodeEntries :: Maybe MST -> [LayerGroup] -> Int -> [NodeEntry]
@@ -220,7 +234,7 @@ buildNodeEntries mLeft groups layer =
   in leftEntry ++ rightGroups
   where
     buildGroup (key, val, rightGroup) =
-      let mRight     = buildAtLayer rightGroup (layer - 1)
+      let mRight     = (\rs -> buildAtLayer rs (layer - 1)) <$> NE.nonEmpty rightGroup
           rightEntry = maybe [] (\sub -> [SubTree sub]) mRight
       in Leaf key val : rightEntry
 
@@ -235,13 +249,13 @@ type LayerGroup = (T.Text, CidBytes, [(T.Text, CidBytes, Int)])
 -- | Split entries into the left group (entries before the first entry at
 -- @layer@) and a list of 'LayerGroup's.
 splitByLayer
-  :: [(T.Text, CidBytes, Int)]
+  :: NE.NonEmpty (T.Text, CidBytes, Int)
   -> Int
   -> ( [(T.Text, CidBytes, Int)]  -- left group
      , [LayerGroup]                -- same-layer entries with right groups
      )
 splitByLayer entries layer =
-  let (left, rest) = span (\(_, _, l) -> l /= layer) entries
+  let (left, rest) = NE.span (\(_, _, l) -> l /= layer) entries
   in (left, groupByLayer rest layer)
 
 -- | Given a list whose first element is at @layer@, partition into
@@ -326,7 +340,7 @@ computeDiff olds@((ok, ov):ot) news@((nk, nv):nt)
 -- Returns @Right ()@ if every assertion holds, or @Left err@ on the first
 -- mismatch.
 verifyProofs :: MST -> [RecordOp] -> Either MstError ()
-verifyProofs mst ops = mapM_ checkOp ops
+verifyProofs mst = mapM_ checkOp
   where
     checkOp (RecordOp col rkey expectedCid) = do
       let key = col <> "/" <> rkey

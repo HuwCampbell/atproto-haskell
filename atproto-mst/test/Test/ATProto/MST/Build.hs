@@ -12,10 +12,10 @@ import qualified Data.Text            as T
 import ATProto.Car.Cid      (CidBytes (..), parseCidFromBytes)
 import ATProto.Car.Parser   (readCarWithRoot)
 import ATProto.MST.Node     (NodeData (..), TreeEntry (..), decodeNode)
-import ATProto.MST.Encode   (encodeNode, cidForDagCbor)
+import ATProto.MST.Encode   (encodeNode)
 import ATProto.MST.Tree
-  ( MST, NodeEntry (..), WriteDescr (..)
-  , fromList, toList, lookup, member, insert
+  ( WriteDescr (..)
+  , fromList, toList, lookup, insert, singleton
   , mstCid
   )
 import qualified ATProto.MST.Tree as Tree
@@ -47,7 +47,7 @@ genCidBytes = do
 -- | Generate a sorted, unique list of MST entries.
 genEntries :: Gen [(T.Text, CidBytes)]
 genEntries = do
-  n <- Gen.int (Range.linear 0 100)
+  n     <- Gen.int (Range.linear 0 100)
   pairs <- sequence [ (,) <$> genMstKey <*> genCidBytes | _ <- [1..n] ]
   return (Map.toAscList (Map.fromList pairs))
 
@@ -247,11 +247,9 @@ prop_insertPreservesOthers = property $ do
 --   tree as building via 'fromList' (the oracle for structural correctness).
 prop_insertMatchesFromList :: Property
 prop_insertMatchesFromList = property $ do
-  entries <- forAll (Gen.filter (not . null) genEntries)
-  -- Build by repeated insert starting from the first entry
-  let (k0, v0) : rest = entries
-  let initial  = case fromList [(k0, v0)] of Just m -> m; Nothing -> error "fromList returned Nothing for single entry"
-  let byInsert = foldr (\(k, v) m -> insert k v m) initial rest
+  entries@((k0, v0) : rest) <- forAll (Gen.filter (not . null) genEntries)
+  let initial  = singleton k0 v0
+  let byInsert = foldr (uncurry insert) initial rest
   -- Build via fromList (the reference)
   case fromList entries of
     Nothing  -> failure
