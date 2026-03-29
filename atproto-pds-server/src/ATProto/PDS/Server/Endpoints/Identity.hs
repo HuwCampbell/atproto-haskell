@@ -11,7 +11,7 @@ import ATProto.PDS.Storage           (AccountStore (..))
 import ATProto.Syntax.DID            (unDID)
 import ATProto.Repo.Identity         (ResolveHandleResponse (..),
                                       resolveHandleResponseCodec)
-import ATProto.XRPC.Server           (XrpcServerRequest (..), XrpcHandlerResult (..),
+import ATProto.XRPC.Server           (XrpcServerRequest (..), XrpcHandlerResult (..), lift,
                                       runHandler, requireParam, respondCodec, throwXrpc)
 import ATProto.PDS.Server.Env
 
@@ -24,7 +24,7 @@ handleResolveHandle
   => XrpcServerRequest T.Text -> AppM s XrpcHandlerResult
 handleResolveHandle req = runHandler $ do
   handle <- requireParam "handle" req
-  store <- asks envStore
+  store <- lift $ asks envStore
   mDid <- liftIO $ lookupByHandle store handle
   case mDid of
     Nothing -> throwXrpc "HandleNotFound" ("Unable to resolve handle: " <> handle)

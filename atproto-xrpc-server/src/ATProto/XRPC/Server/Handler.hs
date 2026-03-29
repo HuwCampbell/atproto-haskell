@@ -35,9 +35,12 @@ module ATProto.XRPC.Server.Handler
   , respondRaw
     -- * IO helpers
   , liftAction
+    -- * Re-exports
+  , lift
   ) where
 
 import           Control.Monad.IO.Class     (MonadIO, liftIO)
+import           Control.Monad.Trans.Class  (lift)
 import           Control.Monad.Trans.Either (EitherT, runEitherT, left)
 import qualified Data.ByteString.Lazy       as BL
 import qualified Data.Map.Strict            as Map

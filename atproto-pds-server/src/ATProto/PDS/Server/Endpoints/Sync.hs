@@ -27,7 +27,7 @@ import ATProto.Repo.Sync             (GetRepoStatusResponse (..),
                                       listReposResponseCodec,
                                       RepoInfo (..))
 import ATProto.Syntax.DID            (unDID, parseDID)
-import ATProto.XRPC.Server           (XrpcServerRequest (..), XrpcHandlerResult (..),
+import ATProto.XRPC.Server           (XrpcServerRequest (..), XrpcHandlerResult (..), lift,
                                       runHandler, requireParam,
                                       respondCodec, respondRaw, throwXrpc)
 import ATProto.PDS.Server.Env
@@ -44,7 +44,7 @@ handleGetBlob req = runHandler $ do
   cid <- case textToCidBytes cidText of
     Left _  -> throwXrpc "InvalidRequest" "Invalid CID"
     Right c -> return c
-  store <- asks envStore
+  store <- lift $ asks envStore
   mBlob <- liftIO $ getBlob store cid
   case mBlob of
     Nothing -> throwXrpc "BlobNotFound" "Blob not found"
@@ -64,7 +64,7 @@ handleSyncGetRecord req = runHandler $ do
   did <- case parseDID didText of
     Left _  -> throwXrpc "InvalidRequest" "Invalid DID"
     Right d -> return d
-  store <- asks envStore
+  store <- lift $ asks envStore
   mHead <- liftIO $ getRepoHead store did
   headCid <- case mHead of
     Nothing -> throwXrpc "RepoNotFound" "Repository not found"
@@ -87,7 +87,7 @@ handleGetRepo req = runHandler $ do
   did <- case parseDID didText of
     Left _  -> throwXrpc "InvalidRequest" "Invalid DID"
     Right d -> return d
-  store <- asks envStore
+  store <- lift $ asks envStore
   res <- liftIO $ exportRepoCar store did
   case res of
     Left _err     -> throwXrpc "RepoNotFound" "Repository not found"
@@ -105,7 +105,7 @@ handleGetRepoStatus req = runHandler $ do
   did <- case parseDID didText of
     Left _  -> throwXrpc "InvalidRequest" "Invalid DID"
     Right d -> return d
-  store <- asks envStore
+  store <- lift $ asks envStore
   mHead <- liftIO $ getRepoHead store did
   headCid <- case mHead of
     Nothing -> throwXrpc "RepoNotFound" "Repository not found"
@@ -124,7 +124,7 @@ handleListBlobs
   :: BlobStore s
   => XrpcServerRequest T.Text -> AppM s XrpcHandlerResult
 handleListBlobs _req = runHandler $ do
-  store <- asks envStore
+  store <- lift $ asks envStore
   cids <- liftIO $ listBlobs store
   respondCodec listBlobsResponseCodec $
     ListBlobsResponse (map cidToText cids) Nothing
@@ -137,7 +137,7 @@ handleListRepos
   :: AccountStore s
   => XrpcServerRequest T.Text -> AppM s XrpcHandlerResult
 handleListRepos _req = runHandler $ do
-  store <- asks envStore
+  store <- lift $ asks envStore
   accts <- liftIO $ listAccounts store
   let repos = map (\ai ->
         let active = aiActive ai

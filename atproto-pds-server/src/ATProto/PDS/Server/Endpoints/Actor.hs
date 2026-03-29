@@ -11,7 +11,7 @@ import qualified Data.Text            as T
 import ATProto.PDS.Storage           (PreferenceStore (..))
 import ATProto.Repo.Actor            (GetPreferencesResponse (..),
                                       getPreferencesResponseCodec)
-import ATProto.XRPC.Server           (XrpcServerRequest (..), XrpcHandlerResult (..),
+import ATProto.XRPC.Server           (XrpcServerRequest (..), XrpcHandlerResult (..), lift,
                                       runHandler, requireAuth, requireBody,
                                       respondCodec, respondAccepted)
 import ATProto.PDS.Server.Env
@@ -25,7 +25,7 @@ handleGetPreferences
   => XrpcServerRequest T.Text -> AppM s XrpcHandlerResult
 handleGetPreferences req = runHandler $ do
   callerDid <- requireAuth req
-  store <- asks envStore
+  store <- lift $ asks envStore
   mPrefs <- liftIO $ getPreferences store callerDid
   case mPrefs of
     Nothing ->
@@ -46,6 +46,6 @@ handlePutPreferences
 handlePutPreferences req = runHandler $ do
   callerDid <- requireAuth req
   body <- requireBody req
-  store <- asks envStore
+  store <- lift $ asks envStore
   liftIO $ putPreferences store callerDid body
   respondAccepted

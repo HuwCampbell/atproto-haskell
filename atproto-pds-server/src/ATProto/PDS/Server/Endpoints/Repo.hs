@@ -21,7 +21,8 @@ import ATProto.Ipld.Value            (LexValue (..), BlobRef (..), Cid (..))
 import qualified ATProto.Lex.Codec    as Codec
 import qualified ATProto.Lex.Cbor     as LexCbor
 import ATProto.PDS.Storage           (BlockStore (..), RepoStore (..),
-                                      BlobStore (..), AccountStore (..))
+                                      BlobStore (..), AccountStore (..),
+                                      AccountInfo (..))
 import ATProto.PDS.Repo              (PdsError (..))
 import qualified ATProto.PDS.Repo     as PDS
 import ATProto.Repo.ApplyWrites      (applyWritesRequestCodec)
@@ -39,7 +40,7 @@ import ATProto.Repo.PutRecord        (PutRecordRequest (..), PutRecordResponse (
 import ATProto.Repo.UploadBlob       (UploadBlobResponse (..), uploadBlobResponseCodec)
 import ATProto.Repo.CommitMeta       (CommitMeta (..))
 import ATProto.Syntax.DID            (unDID, parseDID)
-import ATProto.XRPC.Server           (XrpcServerRequest (..), XrpcHandlerResult (..),
+import ATProto.XRPC.Server           (XrpcServerRequest (..), XrpcHandlerResult (..), lift,
                                       runHandler, requireAuth, requireParam,
                                       decodeBody, requireBody, respondCodec,
                                       respondRaw, throwXrpc, Handler)
@@ -51,11 +52,11 @@ import ATProto.PDS.Server.Env
 
 -- | Serialise a LexValue to DAG-CBOR bytes for storage.
 lexToCbor :: LexValue -> BS.ByteString
-lexToCbor = LexCbor.serialise Codec.lexValue
+lexToCbor = BL.toStrict . LexCbor.serialise Codec.lexValue
 
 -- | Deserialise DAG-CBOR bytes back to a LexValue for JSON responses.
 cborToLex :: BS.ByteString -> LexValue
-cborToLex bs = case LexCbor.deserialise Codec.lexValue bs of
+cborToLex bs = case LexCbor.deserialise Codec.lexValue (BL.fromStrict bs) of
   Right v -> v
   Left  _ -> LexNull
 
@@ -88,8 +89,8 @@ handleCreateRecord req = runHandler $ do
   did <- case parseDID callerDid of
     Left _  -> throwXrpc "InvalidRequest" "Invalid caller DID"
     Right d -> return d
-  store <- asks envStore
-  key <- asks envSigningKey
+  store <- lift $ asks envStore
+  key <- lift $ asks envSigningKey
   let recordBytes = lexToCbor (crrRecord parsed)
       collection  = crrCollection parsed
       rkey        = crrRkey parsed
@@ -115,16 +116,14 @@ handleDeleteRecord req = runHandler $ do
   did <- case parseDID callerDid of
     Left _  -> throwXrpc "InvalidRequest" "Invalid caller DID"
     Right d -> return d
-  store <- asks envStore
-  key <- asks envSigningKey
+  store <- lift $ asks envStore
+  key <- lift $ asks envSigningKey
   res <- liftIO $ PDS.deleteRecord store did key
-           (drrCollection parsed) (drrRkey parsed)
+           (ATProto.Repo.DeleteRecord.drrCollection parsed)
+           (ATProto.Repo.DeleteRecord.drrRkey parsed)
   case res of
     Left err -> throwPds err
     Right _  -> return XrpcAccepted
-  where
-    drrCollection = ATProto.Repo.DeleteRecord.drrCollection
-    drrRkey       = ATProto.Repo.DeleteRecord.drrRkey
 
 -- ---------------------------------------------------------------------------
 -- com.atproto.repo.getRecord
@@ -140,7 +139,7 @@ handleGetRecord req = runHandler $ do
   did <- case parseDID repo of
     Left _  -> throwXrpc "InvalidRequest" "Invalid repo DID"
     Right d -> return d
-  store <- asks envStore
+  store <- lift $ asks envStore
   mHead <- liftIO $ getRepoHead store did
   headCid <- case mHead of
     Nothing -> throwXrpc "RepoNotFound" "Repository not found"
@@ -168,7 +167,7 @@ handleListRecords req = runHandler $ do
   did <- case parseDID repo of
     Left _  -> throwXrpc "InvalidRequest" "Invalid repo DID"
     Right d -> return d
-  store <- asks envStore
+  store <- lift $ asks envStore
   mHead <- liftIO $ getRepoHead store did
   headCid <- case mHead of
     Nothing -> throwXrpc "RepoNotFound" "Repository not found"
@@ -198,8 +197,8 @@ handlePutRecord req = runHandler $ do
   did <- case parseDID callerDid of
     Left _  -> throwXrpc "InvalidRequest" "Invalid caller DID"
     Right d -> return d
-  store <- asks envStore
-  key <- asks envSigningKey
+  store <- lift $ asks envStore
+  key <- lift $ asks envSigningKey
   let recordBytes = lexToCbor (prrRecord parsed)
       collection  = prrCollection parsed
       rkey        = prrRkey parsed
@@ -222,12 +221,12 @@ handleApplyWrites
   => XrpcServerRequest T.Text -> AppM s XrpcHandlerResult
 handleApplyWrites req = runHandler $ do
   callerDid <- requireAuth req
-  parsed <- decodeBody applyWritesRequestCodec req
+  _parsed <- decodeBody applyWritesRequestCodec req
   did <- case parseDID callerDid of
     Left _  -> throwXrpc "InvalidRequest" "Invalid caller DID"
     Right d -> return d
-  store <- asks envStore
-  key <- asks envSigningKey
+  store <- lift $ asks envStore
+  key <- lift $ asks envSigningKey
   -- TODO: parse individual write ops from LexValue list
   res <- liftIO $ PDS.applyWrites store did key []
   case res of
@@ -246,7 +245,7 @@ handleDescribeRepo req = runHandler $ do
   did <- case parseDID repo of
     Left _  -> throwXrpc "InvalidRequest" "Invalid repo DID"
     Right d -> return d
-  store <- asks envStore
+  store <- lift $ asks envStore
   mHead <- liftIO $ getRepoHead store did
   case mHead of
     Nothing -> throwXrpc "RepoNotFound" "Repository not found"
@@ -266,7 +265,7 @@ handleUploadBlob
 handleUploadBlob req = runHandler $ do
   _callerDid <- requireAuth req
   body <- requireBody req
-  store <- asks envStore
+  store <- lift $ asks envStore
   let blobBytes = BL.toStrict body
       blobCid   = cidForDagCbor blobBytes
   liftIO $ putBlob store blobCid blobBytes

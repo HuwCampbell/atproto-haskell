@@ -1,24 +1,21 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE TemplateHaskell #-}
 -- | Integration tests for the PDS XRPC server.
 module Test.ATProto.PDS.Server (tests) where
 
 import qualified Data.ByteString.Lazy as BL
-import qualified Data.Map.Strict      as Map
 import qualified Data.Text            as T
 import qualified Data.Text.Encoding   as TE
 
 import Hedgehog
-import qualified Hedgehog.Gen as Gen
 
-import           Network.HTTP.Types     (status200, status202, status400, methodGet, methodPost)
-import           Network.Wai            (defaultRequest, requestMethod, rawPathInfo)
-import           Network.Wai.Internal   (Request (..))
+import           Network.HTTP.Types     (status200, methodGet, methodPost, http11)
+import           Network.Wai.Internal   (Request (..), RequestBodyLength (..))
 import           Network.Wai.Test       (runSession, srequest, SRequest (..),
-                                         simpleBody, simpleStatus,
-                                         defaultRequest)
+                                         simpleBody, simpleStatus)
 
 import ATProto.Crypto                   (generateKeyPair, Curve (..))
-import ATProto.PDS.Storage.InMemory     (newInMemoryStore)
+import ATProto.PDS.Storage.InMemory     (InMemoryStore, newInMemoryStore)
 import ATProto.PDS.Server
 
 tests :: Hedgehog.Group
@@ -33,9 +30,6 @@ mkEnv = do
   store <- newInMemoryStore
   (priv, _pub) <- generateKeyPair P256
   newEnv store priv "http://localhost:3000" "localhost"
-
--- Need to import InMemoryStore type
-type InMemoryStore = ATProto.PDS.Storage.InMemory.InMemoryStore
 
 -- ---------------------------------------------------------------------------
 -- Tests
@@ -54,12 +48,12 @@ prop_describeServer = withTests 1 . property $ do
         , queryString = []
         , requestHeaders = []
         , rawQueryString = ""
-        , httpVersion = (1, 1)
+        , httpVersion = http11
         , isSecure = False
         , remoteHost = error "unused"
         , requestBody = return ""
         , vault = mempty
-        , requestBodyLength = Network.Wai.Internal.KnownLength 0
+        , requestBodyLength = KnownLength 0
         , requestHeaderHost = Nothing
         , requestHeaderRange = Nothing
         , requestHeaderReferer = Nothing
@@ -88,12 +82,12 @@ prop_createAndGetSession = withTests 1 . property $ do
         , queryString = []
         , requestHeaders = [("Content-Type", "application/json")]
         , rawQueryString = ""
-        , httpVersion = (1, 1)
+        , httpVersion = http11
         , isSecure = False
         , remoteHost = error "unused"
         , requestBody = return ""
         , vault = mempty
-        , requestBodyLength = Network.Wai.Internal.KnownLength (fromIntegral (BL.length createBody))
+        , requestBodyLength = KnownLength (fromIntegral (BL.length createBody))
         , requestHeaderHost = Nothing
         , requestHeaderRange = Nothing
         , requestHeaderReferer = Nothing
@@ -124,12 +118,12 @@ prop_createAndGetSession = withTests 1 . property $ do
             , queryString = []
             , requestHeaders = [("Authorization", TE.encodeUtf8 ("Bearer " <> token))]
             , rawQueryString = ""
-            , httpVersion = (1, 1)
+            , httpVersion = http11
             , isSecure = False
             , remoteHost = error "unused"
             , requestBody = return ""
             , vault = mempty
-            , requestBodyLength = Network.Wai.Internal.KnownLength 0
+            , requestBodyLength = KnownLength 0
             , requestHeaderHost = Nothing
             , requestHeaderRange = Nothing
             , requestHeaderReferer = Nothing
@@ -159,12 +153,12 @@ prop_resolveHandle = withTests 1 . property $ do
         , queryString = []
         , requestHeaders = [("Content-Type", "application/json")]
         , rawQueryString = ""
-        , httpVersion = (1, 1)
+        , httpVersion = http11
         , isSecure = False
         , remoteHost = error "unused"
         , requestBody = return ""
         , vault = mempty
-        , requestBodyLength = Network.Wai.Internal.KnownLength (fromIntegral (BL.length createBody))
+        , requestBodyLength = KnownLength (fromIntegral (BL.length createBody))
         , requestHeaderHost = Nothing
         , requestHeaderRange = Nothing
         , requestHeaderReferer = Nothing
@@ -183,12 +177,12 @@ prop_resolveHandle = withTests 1 . property $ do
         , queryString = [("handle", Just "resolve.test")]
         , requestHeaders = []
         , rawQueryString = "?handle=resolve.test"
-        , httpVersion = (1, 1)
+        , httpVersion = http11
         , isSecure = False
         , remoteHost = error "unused"
         , requestBody = return ""
         , vault = mempty
-        , requestBodyLength = Network.Wai.Internal.KnownLength 0
+        , requestBodyLength = KnownLength 0
         , requestHeaderHost = Nothing
         , requestHeaderRange = Nothing
         , requestHeaderReferer = Nothing

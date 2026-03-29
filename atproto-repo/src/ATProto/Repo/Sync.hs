@@ -77,13 +77,13 @@ repoInfoCodec =
 
 -- | Response from @com.atproto.sync.listRepos@.
 data ListReposResponse = ListReposResponse
-  { lrrRepos  :: [RepoInfo]
-  , lrrCursor :: Maybe T.Text
+  { lrsRepos  :: [RepoInfo]
+  , lrsCursor :: Maybe T.Text
   } deriving (Eq, Show)
 
 listReposResponseCodec :: Codec ListReposResponse
 listReposResponseCodec =
     Codec.record "com.atproto.sync.listRepos#output" $
         ListReposResponse
-            <$> Codec.requiredField "repos"  (Codec.array repoInfoCodec) lrrRepos
-            <*> Codec.optionalField "cursor" Codec.text                  lrrCursor
+            <$> Codec.requiredField "repos"  (Codec.array repoInfoCodec) lrsRepos
+            <*> Codec.optionalField "cursor" Codec.text                  lrsCursor

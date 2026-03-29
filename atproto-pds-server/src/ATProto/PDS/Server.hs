@@ -33,7 +33,7 @@ import           Network.Wai                (Application)
 
 import           ATProto.PDS.Storage        (BlockStore, RepoStore,
                                             BlobStore, PreferenceStore, AccountStore)
-import           ATProto.Syntax.NSID        (parseNSID)
+import           ATProto.Syntax.NSID        (NSID, parseNSID)
 import           ATProto.XRPC.Server        (XrpcServer, makeServer,
                                              withAuthVerifier,
                                              query, procedure)
@@ -117,7 +117,7 @@ pdsApplication env =
 
 -- | Parse an NSID or crash at startup (all NSIDs here are compile-time
 -- constants so failure indicates a programming error).
-nsid :: T.Text -> ATProto.Syntax.NSID.NSID
+nsid :: T.Text -> NSID
 nsid t = case parseNSID t of
   Right n -> n
   Left  _ -> error ("BUG: invalid NSID constant: " <> T.unpack t)

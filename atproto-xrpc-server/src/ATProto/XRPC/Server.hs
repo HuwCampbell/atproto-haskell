@@ -150,6 +150,7 @@ module ATProto.XRPC.Server
   , respondAccepted
   , respondRaw
   , liftAction
+  , lift
   ) where
 
 import qualified Data.Map.Strict as Map

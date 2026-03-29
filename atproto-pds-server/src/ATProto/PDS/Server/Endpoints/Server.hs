@@ -29,7 +29,7 @@ import ATProto.Repo.Server           (DescribeServerResponse (..),
                                       getSessionResponseCodec)
 import ATProto.Syntax.DID            (DID, unDID, parseDID)
 import ATProto.Syntax.TID            (tidNow, unTID)
-import ATProto.XRPC.Server           (XrpcServerRequest (..), XrpcHandlerResult (..),
+import ATProto.XRPC.Server           (XrpcServerRequest (..), XrpcHandlerResult (..), lift,
                                       runHandler, requireAuth, decodeBody,
                                       respondCodec, throwXrpc, Handler)
 import ATProto.PDS.Server.Env
@@ -41,7 +41,7 @@ import ATProto.PDS.Server.Env
 handleDescribeServer
   :: XrpcServerRequest T.Text -> AppM s XrpcHandlerResult
 handleDescribeServer _req = runHandler $ do
-  hostname <- asks envHostname
+  hostname <- lift $ asks envHostname
   respondCodec describeServerResponseCodec $
     DescribeServerResponse [hostname] False
 
@@ -60,7 +60,7 @@ doCreateSession
   :: (BlockStore s, RepoStore s, AccountStore s)
   => T.Text -> T.Text -> Handler (AppM s) XrpcHandlerResult
 doCreateSession ident password = do
-  store <- asks envStore
+  store <- lift $ asks envStore
   -- Try handle index first, then DID lookup.
   mDid <- liftIO $ do
     mByHandle <- lookupByHandle store ident
@@ -76,7 +76,7 @@ doCreateSession ident password = do
         then throwXrpc "InvalidRequest" "Account not found"
         else autoCreateAccount ident password
     Just did -> do
-      store' <- asks envStore
+      store' <- lift $ asks envStore
       mAcct <- liftIO $ getAccount store' (unDID did)
       case mAcct of
         Nothing -> throwXrpc "InvalidRequest" "Account not found"
@@ -92,7 +92,7 @@ autoCreateAccount
   :: (BlockStore s, RepoStore s, AccountStore s)
   => T.Text -> T.Text -> Handler (AppM s) XrpcHandlerResult
 autoCreateAccount handle password = do
-  env <- asks id
+  env <- lift $ asks id
   tid <- liftIO $ unTID <$> tidNow
   let didText = "did:plc:" <> tid
   did <- case parseDID didText of
@@ -110,7 +110,7 @@ autoCreateAccount handle password = do
 
 issueSession :: DID -> T.Text -> Handler (AppM s) XrpcHandlerResult
 issueSession did handle = do
-  env <- asks id
+  env <- lift $ asks id
   let tokenParams = CreateTokenParams
         { ctpSub      = unDID did
         , ctpAud      = envIssuer env
@@ -140,7 +140,7 @@ handleGetSession
   => XrpcServerRequest T.Text -> AppM s XrpcHandlerResult
 handleGetSession req = runHandler $ do
   callerDid <- requireAuth req
-  store <- asks envStore
+  store <- lift $ asks envStore
   mAcct <- liftIO $ getAccount store callerDid
   let handle = maybe callerDid aiHandle mAcct
   respondCodec getSessionResponseCodec $
@@ -158,7 +158,7 @@ handleRefreshSession req = runHandler $ do
   did <- case parseDID callerDid of
     Left _  -> throwXrpc "InvalidRequest" "Invalid DID"
     Right d -> return d
-  store <- asks envStore
+  store <- lift $ asks envStore
   mAcct <- liftIO $ getAccount store callerDid
   case mAcct of
     Nothing -> throwXrpc "InvalidRequest" "Account not found"
@@ -173,7 +173,7 @@ handleActivateAccount
   => XrpcServerRequest T.Text -> AppM s XrpcHandlerResult
 handleActivateAccount req = runHandler $ do
   callerDid <- requireAuth req
-  store <- asks envStore
+  store <- lift $ asks envStore
   liftIO $ modifyAccount store callerDid (\ai -> ai { aiActive = True })
   return XrpcAccepted
 
@@ -186,6 +186,6 @@ handleDeactivateAccount
   => XrpcServerRequest T.Text -> AppM s XrpcHandlerResult
 handleDeactivateAccount req = runHandler $ do
   callerDid <- requireAuth req
-  store <- asks envStore
+  store <- lift $ asks envStore
   liftIO $ modifyAccount store callerDid (\ai -> ai { aiActive = False })
   return XrpcAccepted
