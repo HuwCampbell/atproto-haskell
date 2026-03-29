@@ -31,7 +31,8 @@ import           Control.Monad.Trans.Reader (runReaderT)
 
 import           Network.Wai                (Application)
 
-import           ATProto.PDS.Storage        (BlockStore, RepoStore)
+import           ATProto.PDS.Storage        (BlockStore, RepoStore,
+                                            BlobStore, PreferenceStore, AccountStore)
 import           ATProto.Syntax.NSID        (parseNSID)
 import           ATProto.XRPC.Server        (XrpcServer, makeServer,
                                              withAuthVerifier,
@@ -61,7 +62,7 @@ import qualified Data.Text as T
 -- @com.atproto.identity.*@, @app.bsky.actor.*@, and
 -- @chat.bsky.convo.*@ endpoints.
 pdsServer
-  :: (BlockStore s, RepoStore s)
+  :: (BlockStore s, RepoStore s, BlobStore s, PreferenceStore s, AccountStore s)
   => XrpcServer (AppM s) T.Text
 pdsServer =
   withAuthVerifier pdsAuthVerifier $
@@ -105,7 +106,7 @@ pdsServer =
 -- Runs the 'AppM' monad by supplying the environment via
 -- 'Control.Monad.Trans.Reader.runReaderT'.
 pdsApplication
-  :: (BlockStore s, RepoStore s)
+  :: (BlockStore s, RepoStore s, BlobStore s, PreferenceStore s, AccountStore s)
   => Env s -> Application
 pdsApplication env =
   xrpcApplication (flip runReaderT env) pdsServer

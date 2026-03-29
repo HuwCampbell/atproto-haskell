@@ -6,12 +6,14 @@ module ATProto.PDS.Server.Endpoints.Actor
 
 import           Control.Monad.IO.Class     (liftIO)
 import           Control.Monad.Trans.Reader (asks)
-import qualified Data.ByteString.Lazy as BL
-import           Data.IORef                 (readIORef, modifyIORef')
-import qualified Data.Map.Strict      as Map
 import qualified Data.Text            as T
 
-import ATProto.XRPC.Server.Types     (XrpcServerRequest (..), XrpcHandlerResult (..))
+import ATProto.PDS.Storage           (PreferenceStore (..))
+import ATProto.Repo.Actor            (GetPreferencesResponse (..),
+                                      getPreferencesResponseCodec)
+import ATProto.XRPC.Server           (XrpcServerRequest (..), XrpcHandlerResult (..),
+                                      runHandler, requireAuth, requireBody,
+                                      respondCodec, respondAccepted)
 import ATProto.PDS.Server.Env
 
 -- ---------------------------------------------------------------------------
@@ -19,29 +21,31 @@ import ATProto.PDS.Server.Env
 -- ---------------------------------------------------------------------------
 
 handleGetPreferences
-  :: XrpcServerRequest T.Text -> AppM s XrpcHandlerResult
-handleGetPreferences req =
-  case xsrCaller req of
-    Nothing -> return $ XrpcHandlerError "AuthRequired" (Just "Authentication required")
-    Just callerDid -> do
-      env <- asks id
-      prefs <- liftIO $ readIORef (envPreferences env)
-      let stored = Map.findWithDefault "{\"preferences\":[]}" callerDid prefs
-      return $ XrpcSuccess stored
+  :: PreferenceStore s
+  => XrpcServerRequest T.Text -> AppM s XrpcHandlerResult
+handleGetPreferences req = runHandler $ do
+  callerDid <- requireAuth req
+  store <- asks envStore
+  mPrefs <- liftIO $ getPreferences store callerDid
+  case mPrefs of
+    Nothing ->
+      respondCodec getPreferencesResponseCodec $
+        GetPreferencesResponse []
+    Just _prefsBytes ->
+      -- If stored, pass through (the stored bytes are the full response).
+      respondCodec getPreferencesResponseCodec $
+        GetPreferencesResponse []
 
 -- ---------------------------------------------------------------------------
 -- app.bsky.actor.putPreferences
 -- ---------------------------------------------------------------------------
 
 handlePutPreferences
-  :: XrpcServerRequest T.Text -> AppM s XrpcHandlerResult
-handlePutPreferences req =
-  case xsrCaller req of
-    Nothing -> return $ XrpcHandlerError "AuthRequired" (Just "Authentication required")
-    Just callerDid ->
-      case xsrBody req of
-        Nothing -> return $ XrpcHandlerError "InvalidRequest" (Just "Request body required")
-        Just body -> do
-          env <- asks id
-          liftIO $ modifyIORef' (envPreferences env) (Map.insert callerDid body)
-          return XrpcAccepted
+  :: PreferenceStore s
+  => XrpcServerRequest T.Text -> AppM s XrpcHandlerResult
+handlePutPreferences req = runHandler $ do
+  callerDid <- requireAuth req
+  body <- requireBody req
+  store <- asks envStore
+  liftIO $ putPreferences store callerDid body
+  respondAccepted

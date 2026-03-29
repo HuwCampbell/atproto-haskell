@@ -23,14 +23,21 @@ library
   exposed-modules:
       ATProto.Bsky.Feed.Post
       ATProto.Repo
+      ATProto.Repo.Actor
+      ATProto.Repo.ApplyWrites
+      ATProto.Repo.Chat
       ATProto.Repo.CommitMeta
       ATProto.Repo.CreateRecord
       ATProto.Repo.DeleteRecord
+      ATProto.Repo.DescribeRepo
       ATProto.Repo.GetBlob
       ATProto.Repo.GetProfile
       ATProto.Repo.GetRecord
+      ATProto.Repo.Identity
       ATProto.Repo.ListRecords
       ATProto.Repo.PutRecord
+      ATProto.Repo.Server
+      ATProto.Repo.Sync
       ATProto.Repo.UploadBlob
   build-depends:
       base                   >= 4.14 && < 5

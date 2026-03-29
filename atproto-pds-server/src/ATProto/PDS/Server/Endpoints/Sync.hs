@@ -12,16 +12,24 @@ module ATProto.PDS.Server.Endpoints.Sync
 import           Control.Monad.IO.Class     (liftIO)
 import           Control.Monad.Trans.Reader (asks)
 import qualified Data.ByteString.Lazy as BL
-import           Data.IORef                 (readIORef)
-import qualified Data.Map.Strict      as Map
 import qualified Data.Text            as T
-import qualified Data.Text.Encoding   as TE
 
 import ATProto.Car.Cid               (cidToText, textToCidBytes)
-import ATProto.PDS.Storage           (BlockStore (..), RepoStore (..))
+import ATProto.PDS.Storage           (BlockStore (..), RepoStore (..),
+                                      BlobStore (..), AccountStore (..),
+                                      AccountInfo (..))
 import ATProto.PDS.Repo              (exportRepoCar, getRecord)
-import ATProto.Syntax.DID            (DID, unDID, parseDID)
-import ATProto.XRPC.Server.Types     (XrpcServerRequest (..), XrpcHandlerResult (..))
+import ATProto.Repo.Sync             (GetRepoStatusResponse (..),
+                                      getRepoStatusResponseCodec,
+                                      ListBlobsResponse (..),
+                                      listBlobsResponseCodec,
+                                      ListReposResponse (..),
+                                      listReposResponseCodec,
+                                      RepoInfo (..))
+import ATProto.Syntax.DID            (unDID, parseDID)
+import ATProto.XRPC.Server           (XrpcServerRequest (..), XrpcHandlerResult (..),
+                                      runHandler, requireParam,
+                                      respondCodec, respondRaw, throwXrpc)
 import ATProto.PDS.Server.Env
 
 -- ---------------------------------------------------------------------------
@@ -29,52 +37,43 @@ import ATProto.PDS.Server.Env
 -- ---------------------------------------------------------------------------
 
 handleGetBlob
-  :: XrpcServerRequest T.Text -> AppM s XrpcHandlerResult
-handleGetBlob req = do
-  let params = xsrParams req
-      mCid   = Map.lookup "cid" params
-  case mCid of
-    Nothing -> return $ XrpcHandlerError "InvalidRequest" (Just "cid parameter required")
-    Just cidText -> do
-      case textToCidBytes cidText of
-        Left _ -> return $ XrpcHandlerError "InvalidRequest" (Just "Invalid CID")
-        Right cid -> do
-          env <- asks id
-          blobs <- liftIO $ readIORef (envBlobs env)
-          case Map.lookup cid blobs of
-            Nothing -> return $ XrpcHandlerError "BlobNotFound" (Just "Blob not found")
-            Just blobBytes -> return $ XrpcSuccess (BL.fromStrict blobBytes)
+  :: BlobStore s
+  => XrpcServerRequest T.Text -> AppM s XrpcHandlerResult
+handleGetBlob req = runHandler $ do
+  cidText <- requireParam "cid" req
+  cid <- case textToCidBytes cidText of
+    Left _  -> throwXrpc "InvalidRequest" "Invalid CID"
+    Right c -> return c
+  store <- asks envStore
+  mBlob <- liftIO $ getBlob store cid
+  case mBlob of
+    Nothing -> throwXrpc "BlobNotFound" "Blob not found"
+    Just blobBytes -> respondRaw (BL.fromStrict blobBytes)
 
 -- ---------------------------------------------------------------------------
 -- com.atproto.sync.getRecord
 -- ---------------------------------------------------------------------------
 
 handleSyncGetRecord
-  :: BlockStore s
+  :: (BlockStore s, RepoStore s)
   => XrpcServerRequest T.Text -> AppM s XrpcHandlerResult
-handleSyncGetRecord req = do
-  let params = xsrParams req
-      mDid        = Map.lookup "did" params
-      mCollection = Map.lookup "collection" params
-      mRkey       = Map.lookup "rkey" params
-  case (mDid, mCollection, mRkey) of
-    (Just didText, Just collection, Just rkey) -> do
-      env <- asks id
-      case parseDID didText of
-        Left _ -> return $ XrpcHandlerError "InvalidRequest" (Just "Invalid DID")
-        Right did -> do
-          mHead <- liftIO $ getRepoHead (envStore env) did
-          case mHead of
-            Nothing -> return $ XrpcHandlerError "RepoNotFound" (Just "Repository not found")
-            Just headCid -> do
-              res <- liftIO $ getRecord (envStore env) headCid collection rkey
-              case res of
-                Left _err -> return $ XrpcHandlerError "InternalError" (Just "Failed to read record")
-                Right Nothing -> return $ XrpcHandlerError "RecordNotFound" (Just "Record not found")
-                Right (Just recordBytes) ->
-                  return $ XrpcSuccess (BL.fromStrict recordBytes)
-    _ -> return $ XrpcHandlerError "InvalidRequest"
-           (Just "did, collection, and rkey are required")
+handleSyncGetRecord req = runHandler $ do
+  didText    <- requireParam "did" req
+  collection <- requireParam "collection" req
+  rkey       <- requireParam "rkey" req
+  did <- case parseDID didText of
+    Left _  -> throwXrpc "InvalidRequest" "Invalid DID"
+    Right d -> return d
+  store <- asks envStore
+  mHead <- liftIO $ getRepoHead store did
+  headCid <- case mHead of
+    Nothing -> throwXrpc "RepoNotFound" "Repository not found"
+    Just c  -> return c
+  res <- liftIO $ getRecord store headCid collection rkey
+  case res of
+    Left _err     -> throwXrpc "InternalError" "Failed to read record"
+    Right Nothing -> throwXrpc "RecordNotFound" "Record not found"
+    Right (Just recordBytes) -> respondRaw (BL.fromStrict recordBytes)
 
 -- ---------------------------------------------------------------------------
 -- com.atproto.sync.getRepo
@@ -83,85 +82,70 @@ handleSyncGetRecord req = do
 handleGetRepo
   :: (BlockStore s, RepoStore s)
   => XrpcServerRequest T.Text -> AppM s XrpcHandlerResult
-handleGetRepo req = do
-  let mDid = Map.lookup "did" (xsrParams req)
-  case mDid of
-    Nothing -> return $ XrpcHandlerError "InvalidRequest" (Just "did parameter required")
-    Just didText -> do
-      env <- asks id
-      case parseDID didText of
-        Left _ -> return $ XrpcHandlerError "InvalidRequest" (Just "Invalid DID")
-        Right did -> do
-          res <- liftIO $ exportRepoCar (envStore env) did
-          case res of
-            Left _err -> return $ XrpcHandlerError "RepoNotFound" (Just "Repository not found")
-            Right carBytes -> return $ XrpcSuccess (BL.fromStrict carBytes)
+handleGetRepo req = runHandler $ do
+  didText <- requireParam "did" req
+  did <- case parseDID didText of
+    Left _  -> throwXrpc "InvalidRequest" "Invalid DID"
+    Right d -> return d
+  store <- asks envStore
+  res <- liftIO $ exportRepoCar store did
+  case res of
+    Left _err     -> throwXrpc "RepoNotFound" "Repository not found"
+    Right carBytes -> respondRaw (BL.fromStrict carBytes)
 
 -- ---------------------------------------------------------------------------
 -- com.atproto.sync.getRepoStatus
 -- ---------------------------------------------------------------------------
 
 handleGetRepoStatus
-  :: (BlockStore s, RepoStore s)
+  :: (BlockStore s, RepoStore s, AccountStore s)
   => XrpcServerRequest T.Text -> AppM s XrpcHandlerResult
-handleGetRepoStatus req = do
-  let mDid = Map.lookup "did" (xsrParams req)
-  case mDid of
-    Nothing -> return $ XrpcHandlerError "InvalidRequest" (Just "did parameter required")
-    Just didText -> do
-      env <- asks id
-      case parseDID didText of
-        Left _ -> return $ XrpcHandlerError "InvalidRequest" (Just "Invalid DID")
-        Right did -> do
-          mHead <- liftIO $ getRepoHead (envStore env) did
-          accts <- liftIO $ readIORef (envAccounts env)
-          let active = case Map.lookup didText accts of
-                Just ai -> aiActive ai
-                Nothing -> True
-              status = if active then ("active" :: T.Text) else "deactivated"
-          case mHead of
-            Nothing -> return $ XrpcHandlerError "RepoNotFound" (Just "Repository not found")
-            Just headCid ->
-              return $ XrpcSuccess $ BL.fromStrict $ TE.encodeUtf8 $
-                "{\"did\":\"" <> didText <> "\""
-                <> ",\"active\":" <> if active then "true" else "false"
-                <> ",\"status\":\"" <> status <> "\""
-                <> ",\"rev\":\"" <> cidToText headCid <> "\"}"
+handleGetRepoStatus req = runHandler $ do
+  didText <- requireParam "did" req
+  did <- case parseDID didText of
+    Left _  -> throwXrpc "InvalidRequest" "Invalid DID"
+    Right d -> return d
+  store <- asks envStore
+  mHead <- liftIO $ getRepoHead store did
+  headCid <- case mHead of
+    Nothing -> throwXrpc "RepoNotFound" "Repository not found"
+    Just c  -> return c
+  mAcct <- liftIO $ getAccount store didText
+  let active = maybe True aiActive mAcct
+      status = if active then Just "active" else Just "deactivated"
+  respondCodec getRepoStatusResponseCodec $
+    GetRepoStatusResponse didText active status (Just (cidToText headCid))
 
 -- ---------------------------------------------------------------------------
 -- com.atproto.sync.listBlobs
 -- ---------------------------------------------------------------------------
 
 handleListBlobs
-  :: XrpcServerRequest T.Text -> AppM s XrpcHandlerResult
-handleListBlobs _req = do
-  env <- asks id
-  blobs <- liftIO $ readIORef (envBlobs env)
-  let cids = map cidToText (Map.keys blobs)
-      arr  = "[" <> T.intercalate "," (map (\c -> "\"" <> c <> "\"") cids) <> "]"
-  return $ XrpcSuccess $ BL.fromStrict $ TE.encodeUtf8 $
-    "{\"cids\":" <> arr <> "}"
+  :: BlobStore s
+  => XrpcServerRequest T.Text -> AppM s XrpcHandlerResult
+handleListBlobs _req = runHandler $ do
+  store <- asks envStore
+  cids <- liftIO $ listBlobs store
+  respondCodec listBlobsResponseCodec $
+    ListBlobsResponse (map cidToText cids) Nothing
 
 -- ---------------------------------------------------------------------------
 -- com.atproto.sync.listRepos
 -- ---------------------------------------------------------------------------
 
 handleListRepos
-  :: XrpcServerRequest T.Text -> AppM s XrpcHandlerResult
-handleListRepos _req = do
-  env <- asks id
-  accts <- liftIO $ readIORef (envAccounts env)
-  let repos = map (\(_didText, ai) ->
-        let d = unDID (aiDid ai)
-            active = aiActive ai
-            status = if active then ("active" :: T.Text) else "deactivated"
-        in "{\"did\":\"" <> d <> "\""
-           <> ",\"active\":" <> (if active then "true" else "false")
-           <> ",\"status\":\"" <> status <> "\"}"
-        ) (Map.toList accts)
-      arr = "[" <> T.intercalate "," repos <> "]"
-  return $ XrpcSuccess $ BL.fromStrict $ TE.encodeUtf8 $
-    "{\"repos\":" <> arr <> "}"
+  :: AccountStore s
+  => XrpcServerRequest T.Text -> AppM s XrpcHandlerResult
+handleListRepos _req = runHandler $ do
+  store <- asks envStore
+  accts <- liftIO $ listAccounts store
+  let repos = map (\ai ->
+        let active = aiActive ai
+            status = if active then Just "active" else Just "deactivated"
+        in RepoInfo (unDID (aiDid ai)) active status
+        ) accts
+  respondCodec listReposResponseCodec $
+    ListReposResponse repos Nothing
 
 -- ---------------------------------------------------------------------------
 -- com.atproto.sync.subscribeRepos  (stub)

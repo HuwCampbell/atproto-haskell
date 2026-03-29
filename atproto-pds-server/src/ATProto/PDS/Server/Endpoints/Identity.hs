@@ -5,14 +5,14 @@ module ATProto.PDS.Server.Endpoints.Identity
 
 import           Control.Monad.IO.Class     (liftIO)
 import           Control.Monad.Trans.Reader (asks)
-import qualified Data.ByteString.Lazy as BL
-import           Data.IORef                 (readIORef)
-import qualified Data.Map.Strict      as Map
 import qualified Data.Text            as T
-import qualified Data.Text.Encoding   as TE
 
+import ATProto.PDS.Storage           (AccountStore (..))
 import ATProto.Syntax.DID            (unDID)
-import ATProto.XRPC.Server.Types     (XrpcServerRequest (..), XrpcHandlerResult (..))
+import ATProto.Repo.Identity         (ResolveHandleResponse (..),
+                                      resolveHandleResponseCodec)
+import ATProto.XRPC.Server           (XrpcServerRequest (..), XrpcHandlerResult (..),
+                                      runHandler, requireParam, respondCodec, throwXrpc)
 import ATProto.PDS.Server.Env
 
 -- ---------------------------------------------------------------------------
@@ -20,17 +20,13 @@ import ATProto.PDS.Server.Env
 -- ---------------------------------------------------------------------------
 
 handleResolveHandle
-  :: XrpcServerRequest T.Text -> AppM s XrpcHandlerResult
-handleResolveHandle req = do
-  let mHandle = Map.lookup "handle" (xsrParams req)
-  case mHandle of
-    Nothing -> return $ XrpcHandlerError "InvalidRequest" (Just "handle parameter required")
-    Just handle -> do
-      env <- asks id
-      idx <- liftIO $ readIORef (envHandleIndex env)
-      case Map.lookup handle idx of
-        Nothing -> return $ XrpcHandlerError "HandleNotFound"
-          (Just ("Unable to resolve handle: " <> handle))
-        Just did ->
-          return $ XrpcSuccess $ BL.fromStrict $ TE.encodeUtf8 $
-            "{\"did\":\"" <> unDID did <> "\"}"
+  :: AccountStore s
+  => XrpcServerRequest T.Text -> AppM s XrpcHandlerResult
+handleResolveHandle req = runHandler $ do
+  handle <- requireParam "handle" req
+  store <- asks envStore
+  mDid <- liftIO $ lookupByHandle store handle
+  case mDid of
+    Nothing -> throwXrpc "HandleNotFound" ("Unable to resolve handle: " <> handle)
+    Just did -> respondCodec resolveHandleResponseCodec $
+      ResolveHandleResponse (unDID did)

@@ -138,6 +138,18 @@ module ATProto.XRPC.Server
   , AuthVerifier
   , XrpcEndpoint (..)
   , XrpcServer (..)
+    -- * Re-exports from 'ATProto.XRPC.Server.Handler'
+  , Handler
+  , runHandler
+  , requireAuth
+  , requireBody
+  , decodeBody
+  , requireParam
+  , throwXrpc
+  , respondCodec
+  , respondAccepted
+  , respondRaw
+  , liftAction
   ) where
 
 import qualified Data.Map.Strict as Map
@@ -145,6 +157,7 @@ import qualified Data.Map.Strict as Map
 import ATProto.Syntax.NSID       (NSID)
 import ATProto.XRPC.Types        (XrpcMethod (..))
 import ATProto.XRPC.Server.Types
+import ATProto.XRPC.Server.Handler
 
 -- | Register a query (HTTP GET) endpoint.
 query :: NSID -> XrpcHandler m did -> XrpcEndpoint m did

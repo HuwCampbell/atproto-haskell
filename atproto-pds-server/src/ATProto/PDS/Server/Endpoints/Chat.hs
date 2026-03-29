@@ -10,8 +10,13 @@ module ATProto.PDS.Server.Endpoints.Chat
 
 import qualified Data.Text as T
 
-import ATProto.XRPC.Server.Types (XrpcServerRequest (..), XrpcHandlerResult (..))
-import ATProto.PDS.Server.Env    (AppM)
+import ATProto.Repo.Chat            (GetLogResponse (..),
+                                     getLogResponseCodec,
+                                     ListConvosResponse (..),
+                                     listConvosResponseCodec)
+import ATProto.XRPC.Server          (XrpcServerRequest (..), XrpcHandlerResult (..),
+                                     runHandler, requireAuth, respondCodec)
+import ATProto.PDS.Server.Env       (AppM)
 
 -- ---------------------------------------------------------------------------
 -- chat.bsky.convo.getLog
@@ -19,10 +24,9 @@ import ATProto.PDS.Server.Env    (AppM)
 
 handleGetLog
   :: XrpcServerRequest T.Text -> AppM s XrpcHandlerResult
-handleGetLog req =
-  case xsrCaller req of
-    Nothing -> return $ XrpcHandlerError "AuthRequired" (Just "Authentication required")
-    Just _  -> return $ XrpcSuccess "{\"logs\":[]}"
+handleGetLog req = runHandler $ do
+  _ <- requireAuth req
+  respondCodec getLogResponseCodec $ GetLogResponse []
 
 -- ---------------------------------------------------------------------------
 -- chat.bsky.convo.listConvos
@@ -30,7 +34,6 @@ handleGetLog req =
 
 handleListConvos
   :: XrpcServerRequest T.Text -> AppM s XrpcHandlerResult
-handleListConvos req =
-  case xsrCaller req of
-    Nothing -> return $ XrpcHandlerError "AuthRequired" (Just "Authentication required")
-    Just _  -> return $ XrpcSuccess "{\"convos\":[]}"
+handleListConvos req = runHandler $ do
+  _ <- requireAuth req
+  respondCodec listConvosResponseCodec $ ListConvosResponse []

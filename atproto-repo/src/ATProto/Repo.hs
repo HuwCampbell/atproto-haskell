@@ -61,6 +61,14 @@ module ATProto.Repo
   , GetRecordParams (..)
   , defaultGetRecordParams
   , GetRecordResponse (..)
+    -- * @com.atproto.repo.deleteRecord@
+  , deleteRecord
+  , DeleteRecordRequest (..)
+  , DeleteRecordResponse (..)
+    -- * @com.atproto.repo.describeRepo@
+  , DescribeRepoResponse (..)
+    -- * @com.atproto.repo.applyWrites@
+  , ApplyWritesRequest (..)
     -- * @com.atproto.repo.uploadBlob@
   , uploadBlob
   , UploadBlobRequest (..)
@@ -68,6 +76,23 @@ module ATProto.Repo
     -- * @com.atproto.sync.getBlob@
   , getBlob
   , GetBlobParams (..)
+    -- * @com.atproto.sync.*@
+  , GetRepoStatusResponse (..)
+  , ListBlobsResponse (..)
+  , ListReposResponse (..)
+  , RepoInfo (..)
+    -- * @com.atproto.server.*@
+  , DescribeServerResponse (..)
+  , CreateSessionRequest (..)
+  , CreateSessionResponse (..)
+  , GetSessionResponse (..)
+    -- * @com.atproto.identity.*@
+  , ResolveHandleResponse (..)
+    -- * @app.bsky.actor.*@
+  , GetPreferencesResponse (..)
+    -- * @chat.bsky.convo.*@
+  , GetLogResponse (..)
+  , ListConvosResponse (..)
     -- * @app.bsky.actor.getProfile@
   , getProfile
   , GetProfileParams (..)
@@ -75,11 +100,19 @@ module ATProto.Repo
   , CommitMeta (..)
   ) where
 
+import ATProto.Repo.Actor
+import ATProto.Repo.ApplyWrites
+import ATProto.Repo.Chat
 import ATProto.Repo.CommitMeta
+import ATProto.Repo.CreateRecord
+import ATProto.Repo.DeleteRecord
+import ATProto.Repo.DescribeRepo
 import ATProto.Repo.GetBlob
 import ATProto.Repo.GetProfile
 import ATProto.Repo.GetRecord
+import ATProto.Repo.Identity
 import ATProto.Repo.ListRecords
-import ATProto.Repo.CreateRecord
 import ATProto.Repo.PutRecord
+import ATProto.Repo.Server
+import ATProto.Repo.Sync
 import ATProto.Repo.UploadBlob
