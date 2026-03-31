@@ -26,6 +26,7 @@ library
       ATProto.Lex.Schema
       ATProto.Lex.Json
       ATProto.Lex.Cbor
+      ATProto.Lex.Validate
   build-depends:
       base                    >= 4.14 && < 5
     , aeson                   >= 2.0  && < 2.3
@@ -35,6 +36,7 @@ library
     , profunctors             >= 5.6  && < 5.7
     , text                    >= 1.2  && < 2.2
     , atproto-haskell-ipld
+    , atproto-haskell-lexicon
   hs-source-dirs:   src
   default-extensions: OverloadedStrings
   default-language:   Haskell2010
@@ -45,6 +47,7 @@ test-suite atproto-lex-tests
   main-is:          Main.hs
   other-modules:
       Test.ATProto.Lex.Codec
+      Test.ATProto.Lex.Validate
   build-depends:
       base                    >= 4.14 && < 5
     , aeson                   >= 2.0  && < 2.3
@@ -54,6 +57,7 @@ test-suite atproto-lex-tests
     , hedgehog                >= 1.4  && < 1.8
     , text                    >= 1.2  && < 2.2
     , atproto-haskell-lex
+    , atproto-haskell-lexicon
     , atproto-haskell-ipld
   hs-source-dirs:   test
   default-extensions: OverloadedStrings
