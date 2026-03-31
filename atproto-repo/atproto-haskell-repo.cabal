@@ -1,10 +1,12 @@
 cabal-version:      3.0
 name:               atproto-haskell-repo
 version:            0.1.0.0
-synopsis:           AT Protocol com.atproto.repo XRPC method bindings
+synopsis:           AT Protocol XRPC method bindings for PDS and related services
 description:
-  Typed Haskell bindings for the @com.atproto.repo.*@ XRPC methods, starting
-  with @com.atproto.repo.listRecords@.  Uses the 'XrpcClient' typeclass from
+  Typed Haskell bindings for AT Protocol XRPC methods, organised by their
+  Namespace IDs.  Covers @com.atproto.repo.*@, @com.atproto.server.*@,
+  @com.atproto.identity.*@, @com.atproto.sync.*@, @com.atproto.label.*@,
+  and select @app.bsky.*@ types.  Uses the 'XrpcClient' typeclass from
   @atproto-haskell-xrpc@, so any concrete backend (e.g. the
   @http-client-tls@ backend in @atproto-haskell-xrpc-http@) can be used.
 license:            MIT
@@ -21,17 +23,49 @@ common warnings
 library
   import:           warnings
   exposed-modules:
+      -- app.bsky.*
       ATProto.Bsky.Feed.Post
+      -- com.atproto.identity.*
+      ATProto.Identity.Defs
+      ATProto.Identity.ResolveDid
+      ATProto.Identity.ResolveHandle
+      ATProto.Identity.ResolveIdentity
+      ATProto.Identity.UpdateHandle
+      -- com.atproto.label.*
+      ATProto.Label.Defs
+      -- com.atproto.repo.*
       ATProto.Repo
+      ATProto.Repo.ApplyWrites
       ATProto.Repo.CommitMeta
       ATProto.Repo.CreateRecord
       ATProto.Repo.DeleteRecord
+      ATProto.Repo.DescribeRepo
       ATProto.Repo.GetBlob
       ATProto.Repo.GetProfile
       ATProto.Repo.GetRecord
+      ATProto.Repo.ListMissingBlobs
       ATProto.Repo.ListRecords
       ATProto.Repo.PutRecord
       ATProto.Repo.UploadBlob
+      -- com.atproto.server.*
+      ATProto.Server.CheckAccountStatus
+      ATProto.Server.CreateAccount
+      ATProto.Server.CreateSession
+      ATProto.Server.Defs
+      ATProto.Server.DeleteSession
+      ATProto.Server.DescribeServer
+      ATProto.Server.GetServiceAuth
+      ATProto.Server.GetSession
+      ATProto.Server.RefreshSession
+      -- com.atproto.sync.*
+      ATProto.Sync.GetBlob
+      ATProto.Sync.GetLatestCommit
+      ATProto.Sync.GetRepo
+      ATProto.Sync.GetRepoStatus
+      ATProto.Sync.ListBlobs
+      ATProto.Sync.ListRepos
+      ATProto.Sync.NotifyOfUpdate
+      ATProto.Sync.RequestCrawl
   build-depends:
       base                   >= 4.14 && < 5
     , aeson                  >= 2.0  && < 2.3
@@ -51,9 +85,15 @@ test-suite atproto-repo-tests
   main-is:          Main.hs
   other-modules:
       Test.ATProto.Bsky.Feed.Post
+      Test.ATProto.Identity.ResolveHandle
+      Test.ATProto.Label.Defs
+      Test.ATProto.Repo.ApplyWrites
       Test.ATProto.Repo.GetProfile
       Test.ATProto.Repo.ListRecords
       Test.ATProto.Repo.UploadBlob
+      Test.ATProto.Server.CreateSession
+      Test.ATProto.Server.DescribeServer
+      Test.ATProto.Sync.ListRepos
   build-depends:
       base                   >= 4.14 && < 5
     , bytestring             >= 0.10 && < 0.13

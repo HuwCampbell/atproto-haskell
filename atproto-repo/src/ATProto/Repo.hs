@@ -61,10 +61,36 @@ module ATProto.Repo
   , GetRecordParams (..)
   , defaultGetRecordParams
   , GetRecordResponse (..)
+    -- * @com.atproto.repo.deleteRecord@
+  , deleteRecord
+  , DeleteRecordRequest (..)
+  , DeleteRecordResponse (..)
     -- * @com.atproto.repo.uploadBlob@
   , uploadBlob
   , UploadBlobRequest (..)
   , UploadBlobResponse (..)
+    -- * @com.atproto.repo.describeRepo@
+  , describeRepo
+  , DescribeRepoParams (..)
+  , DescribeRepoResponse (..)
+    -- * @com.atproto.repo.applyWrites@
+  , applyWrites
+  , ApplyWritesRequest (..)
+  , ApplyWritesOp (..)
+  , ApplyWritesCreate (..)
+  , ApplyWritesUpdate (..)
+  , ApplyWritesDelete (..)
+  , ApplyWritesResponse (..)
+  , ApplyWritesResult (..)
+  , ApplyWritesCreateResult (..)
+  , ApplyWritesUpdateResult (..)
+  , ApplyWritesDeleteResult (..)
+    -- * @com.atproto.repo.listMissingBlobs@
+  , listMissingBlobs
+  , ListMissingBlobsParams (..)
+  , defaultListMissingBlobsParams
+  , ListMissingBlobsResponse (..)
+  , RecordBlob (..)
     -- * @com.atproto.sync.getBlob@
   , getBlob
   , GetBlobParams (..)
@@ -75,11 +101,15 @@ module ATProto.Repo
   , CommitMeta (..)
   ) where
 
+import ATProto.Repo.ApplyWrites
 import ATProto.Repo.CommitMeta
+import ATProto.Repo.CreateRecord
+import ATProto.Repo.DeleteRecord
+import ATProto.Repo.DescribeRepo
 import ATProto.Repo.GetBlob
 import ATProto.Repo.GetProfile
 import ATProto.Repo.GetRecord
+import ATProto.Repo.ListMissingBlobs
 import ATProto.Repo.ListRecords
-import ATProto.Repo.CreateRecord
 import ATProto.Repo.PutRecord
 import ATProto.Repo.UploadBlob
