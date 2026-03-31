@@ -7,7 +7,7 @@ import qualified Hedgehog.Range as Range
 import qualified Data.ByteString      as BS
 import qualified Data.Text            as T
 
-import ATProto.Car.Cid              (CidBytes (..))
+import ATProto.Car.Cid              (CidBytes, unsafeCidBytes)
 import ATProto.Crypto.EC            (generateKeyPair)
 import ATProto.Crypto.Types         (Curve (..), PrivKey)
 import ATProto.MST.Encode           (cidForDagCbor)
@@ -59,7 +59,7 @@ prop_initRepo = withTests 10 . property $ do
     Right cid -> do
       annotate ("commit CID: " ++ show cid)
       -- CID should be 36 bytes (dag-cbor + sha256)
-      BS.length (unCidBytes cid) === 36
+      BS.length (unsafeCidBytes cid) === 36
 
 -- | Initialising the same DID twice fails.
 prop_initRepoTwice :: Property

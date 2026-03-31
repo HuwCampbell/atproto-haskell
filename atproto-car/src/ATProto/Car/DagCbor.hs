@@ -29,8 +29,8 @@ import ATProto.Car.Cid (CidBytes (..), parseCidFromBytes)
 
 -- | Encode a CID as CBOR tag 42 with a @0x00@ identity multibase prefix.
 encodeCidTag42 :: CidBytes -> E.Encoding
-encodeCidTag42 (CidBytes raw) =
-  E.encodeTag 42 <> E.encodeBytes (BS.cons 0x00 raw)
+encodeCidTag42 cid =
+  E.encodeTag 42 <> E.encodeBytes (BS.cons 0x00 (unsafeCidBytes cid))
 
 -- | Encode an optional CID: CBOR null for 'Nothing', tag 42 for 'Just'.
 encodeNullableCidTag42 :: Maybe CidBytes -> E.Encoding

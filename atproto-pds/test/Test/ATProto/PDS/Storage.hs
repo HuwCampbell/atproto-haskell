@@ -2,20 +2,20 @@
 module Test.ATProto.PDS.Storage (tests) where
 
 import Hedgehog hiding (Update)
-import qualified Hedgehog.Gen   as Gen
-import qualified Hedgehog.Range as Range
-import qualified Data.ByteString as BS
-import qualified Data.Text       as T
+import qualified Hedgehog.Gen         as Gen
+import qualified Hedgehog.Range       as Range
+import qualified Data.ByteString      as BS
+import qualified Data.Text            as T
 
-import System.Directory   (removeDirectoryRecursive, doesDirectoryExist,
-                           getTemporaryDirectory)
-import System.FilePath    ((</>))
+import System.Directory               (removeDirectoryRecursive, doesDirectoryExist,
+                                       getTemporaryDirectory)
+import System.FilePath                ((</>))
 
-import ATProto.Car.Cid               (CidBytes (..))
-import ATProto.Crypto.EC             (generateKeyPair)
-import ATProto.Crypto.Types          (Curve (..), PrivKey)
-import ATProto.Syntax.DID            (DID, parseDID)
-import ATProto.PDS.Storage           (BlockStore (..), RepoStore (..))
+import ATProto.Car.Cid                (CidBytes, unsafeRawCid)
+import ATProto.Crypto.EC              (generateKeyPair)
+import ATProto.Crypto.Types           (Curve (..), PrivKey)
+import ATProto.Syntax.DID             (DID, parseDID)
+import ATProto.PDS.Storage            (BlockStore (..), RepoStore (..))
 import ATProto.PDS.Storage.FileSystem (FileStore, newFileStore)
 import ATProto.PDS.Repo
 
@@ -57,7 +57,7 @@ prop_blockStoreRoundTrip :: Property
 prop_blockStoreRoundTrip = withTests 5 . property $ do
   body <- forAll genRecordBytes
   (store, _) <- evalIO setupFileStore
-  let cid = CidBytes (BS.pack [0x01, 0x71, 0x12, 0x20] <> BS.replicate 32 0x42)
+  let cid = unsafeRawCid (BS.pack [0x01, 0x71, 0x12, 0x20] <> BS.replicate 32 0x42)
   evalIO (putBlock store cid body)
   result <- evalIO (getBlock store cid)
   result === Just body
@@ -66,7 +66,7 @@ prop_blockStoreRoundTrip = withTests 5 . property $ do
 prop_repoHeadRoundTrip :: Property
 prop_repoHeadRoundTrip = withTests 5 . property $ do
   (store, _) <- evalIO setupFileStore
-  let cid = CidBytes (BS.pack [0x01, 0x71, 0x12, 0x20] <> BS.replicate 32 0xAB)
+  let cid = unsafeRawCid (BS.pack [0x01, 0x71, 0x12, 0x20] <> BS.replicate 32 0xAB)
   -- Initially, no head.
   initial <- evalIO (getRepoHead store testDID)
   initial === Nothing

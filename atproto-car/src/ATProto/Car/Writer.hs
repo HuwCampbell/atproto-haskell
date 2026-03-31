@@ -23,7 +23,7 @@ import qualified Data.Map.Strict      as Map
 import qualified Codec.CBOR.Encoding  as E
 import qualified Codec.CBOR.Write     as W
 
-import ATProto.Car.Cid      (CidBytes (..), encodeVarint)
+import ATProto.Car.Cid       (CidBytes, encodeVarint, unsafeCidBytes)
 import ATProto.Car.BlockMap  (BlockMap)
 import ATProto.Car.DagCbor   (encodeCidTag42)
 
@@ -74,7 +74,7 @@ encodeBlocks = Map.foldlWithKey' encodeBlock BS.empty
 
 -- | Encode a single block entry: @varint(len) ++ cid_bytes ++ block_bytes@.
 encodeBlock :: BS.ByteString -> CidBytes -> BS.ByteString -> BS.ByteString
-encodeBlock acc (CidBytes cidRaw) blockBytes =
-  let entryLen = BS.length cidRaw + BS.length blockBytes
-      entry    = encodeVarint entryLen <> cidRaw <> blockBytes
+encodeBlock acc cid blockBytes =
+  let entryLen = BS.length (unsafeCidBytes cid) + BS.length blockBytes
+      entry    = encodeVarint entryLen <> unsafeCidBytes cid <> blockBytes
   in acc <> entry

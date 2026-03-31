@@ -13,7 +13,7 @@ import qualified Data.ByteString.Lazy as BL
 import qualified Codec.CBOR.Encoding  as E
 import qualified Codec.CBOR.Write     as W
 
-import ATProto.Car.Cid            (CidBytes (..), parseCidFromBytes)
+import ATProto.Car.Cid            (CidBytes, parseCidFromBytes, unsafeCidBytes)
 import ATProto.Crypto.Types       (Curve (..), Signature (..))
 import ATProto.Crypto.EC          (generateKeyPair, sign)
 import ATProto.Repo.Verify.Types  (Commit (..), VerifyError (..))
@@ -63,8 +63,8 @@ canonicalEncoding c =
     <> E.encodeString "prev"    <> E.encodeNull
     <> E.encodeString "version" <> E.encodeInt (commitVersion c)
   where
-    encTag42 (CidBytes bs) =
-      E.encodeTag 42 <> E.encodeBytes (BS.cons 0x00 bs)
+    encTag42 cid =
+      E.encodeTag 42 <> E.encodeBytes (BS.cons 0x00 (unsafeCidBytes cid))
 
 -- ---------------------------------------------------------------------------
 -- Properties

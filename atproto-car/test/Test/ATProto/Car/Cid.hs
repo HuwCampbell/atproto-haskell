@@ -8,7 +8,7 @@ import qualified Data.Text       as T
 import           Data.Bits       (shiftR, (.|.))
 import           Data.Word       (Word8)
 
-import ATProto.Car.Cid hiding (encodeVarint)
+import           ATProto.Car.Cid hiding (encodeVarint)
 
 -- ---------------------------------------------------------------------------
 -- Generator
@@ -38,7 +38,7 @@ genCidBytes = do
                         ++ encodeVarint codec
                         ++ encodeVarint hfCode
                         ++ encodeVarint dLen)
-  pure (CidBytes (header <> digest))
+  pure (unsafeRawCid (header <> digest))
 
 -- ---------------------------------------------------------------------------
 -- Fixtures
@@ -63,7 +63,7 @@ knownCidBytes = BS.pack
 prop_parseCidRoundtrip :: Property
 prop_parseCidRoundtrip = property $ do
   cid <- forAll genCidBytes
-  let bs    = unCidBytes cid
+  let bs    = unsafeCidBytes cid
       total = BS.length bs
   case parseCidFromBytes bs 0 of
     Left err       -> do
@@ -79,21 +79,21 @@ prop_parseAtOffset :: Property
 prop_parseAtOffset = property $ do
   cid    <- forAll genCidBytes
   prefix <- forAll $ Gen.bytes (Range.linear 1 8)
-  let bs  = prefix <> unCidBytes cid
+  let bs  = prefix <> unsafeCidBytes cid
       off = BS.length prefix
   case parseCidFromBytes bs off of
     Left err        -> do
       annotate err
       failure
     Right (cid', n) -> do
-      n    === BS.length (unCidBytes cid)
+      n    === BS.length (unsafeCidBytes cid)
       cid' === cid
 
 -- | Truncating a generated CID to fewer bytes than its length yields Left.
 prop_truncated :: Property
 prop_truncated = property $ do
   cid   <- forAll genCidBytes
-  let bs    = unCidBytes cid
+  let bs    = unsafeCidBytes cid
       total = BS.length bs
   -- Keep strictly fewer bytes than the full CID (at least header, less digest).
   keep  <- forAll $ Gen.int (Range.linear 0 (total - 1))
@@ -116,7 +116,7 @@ prop_badVersion = property $ do
   cid <- forAll genCidBytes
   -- Overwrite the first byte (version) with something other than 0x01.
   ver <- forAll $ Gen.word8 (Range.linear 0x02 0xFF)
-  let bs = BS.cons ver (BS.tail (unCidBytes cid))
+  let bs = BS.cons ver (BS.tail (unsafeCidBytes cid))
   case parseCidFromBytes bs 0 of
     Left _  -> success
     Right _ -> failure
@@ -132,7 +132,7 @@ prop_cidToTextRoundtrip = property $ do
 prop_textToCidBytesKnownValue :: Property
 prop_textToCidBytesKnownValue = property $ do
   textToCidBytes "bafyreifqwkmiw256ojf2zws6tzjeonw6bpd5vza4i22ccpcq4hjv2ts7cm"
-    === Right (CidBytes knownCidBytes)
+    === Right (unsafeRawCid knownCidBytes)
 
 -- | A wrong multibase prefix yields Left.
 prop_textToCidBytesInvalidPrefix :: Property

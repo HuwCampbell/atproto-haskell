@@ -12,7 +12,7 @@
 -- The display form uses multibase base32lower (codec letter @b@).
 module ATProto.Car.Cid
   ( -- * Type
-    CidBytes (..)
+    CidBytes
     -- * Construction
   , cidForDagCbor
     -- * Parsing
@@ -22,6 +22,10 @@ module ATProto.Car.Cid
   , textToCidBytes
     -- * Varint helpers (re-exported for the writer)
   , encodeVarint
+
+    -- * Unsafe
+  , unsafeCidBytes
+  , unsafeRawCid
   ) where
 
 import           Data.Bits  (shiftR, shiftL, (.|.), (.&.))
@@ -32,8 +36,12 @@ import qualified Data.Text       as T
 import qualified Crypto.Hash     as H
 
 -- | A CIDv1 stored as its raw binary representation.
-newtype CidBytes = CidBytes { unCidBytes :: BS.ByteString }
+newtype CidBytes = CidBytes { unsafeCidBytes :: BS.ByteString }
   deriving (Eq, Ord, Show)
+
+
+unsafeRawCid :: BS.ByteString -> CidBytes
+unsafeRawCid = CidBytes
 
 -- ---------------------------------------------------------------------------
 -- CID construction

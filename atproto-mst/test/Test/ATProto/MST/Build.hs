@@ -12,7 +12,7 @@ import           Data.List.NonEmpty   (NonEmpty)
 import qualified Data.Map.Strict      as Map
 import qualified Data.Text            as T
 
-import ATProto.Car.Cid      (CidBytes (..), parseCidFromBytes)
+import ATProto.Car.Cid      (CidBytes, parseCidFromBytes, unsafeRawCid)
 import ATProto.Car.Parser   (readCarWithRoot)
 import ATProto.MST.Node     (NodeData (..), TreeEntry (..), decodeNode)
 import ATProto.MST.Encode   (encodeNode)
@@ -45,7 +45,7 @@ genCidBytes :: Gen CidBytes
 genCidBytes = do
   digest <- Gen.bytes (Range.singleton 32)
   let header = BS.pack [0x01, 0x71, 0x12, 0x20]
-  return (CidBytes (header <> digest))
+  return (unsafeRawCid (header <> digest))
 
 -- | Generate a sorted, unique non-empty list of MST entries.
 genSomeEntries :: Gen (NonEmpty (T.Text, CidBytes))

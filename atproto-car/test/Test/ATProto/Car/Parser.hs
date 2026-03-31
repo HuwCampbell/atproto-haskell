@@ -85,7 +85,7 @@ prop_readCarWithRootCid = property $ do
       annotate (show err)
       failure
     Right (cid, _) ->
-      unCidBytes cid === expectedCidBytes
+      unsafeCidBytes cid === expectedCidBytes
 
 -- | The block map contains the expected block bytes.
 prop_blockMapContents :: Property

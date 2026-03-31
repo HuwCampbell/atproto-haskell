@@ -43,7 +43,7 @@ import qualified Data.Map.Strict      as Map
 import qualified Data.Text            as T
 import qualified Data.Text.Encoding   as TE
 
-import ATProto.Car.Cid      (CidBytes (..))
+import ATProto.Car.Cid      (CidBytes, cidToText)
 import ATProto.Car.BlockMap (BlockMap)
 import ATProto.MST.Node     (NodeData (..), TreeEntry (..), decodeNode)
 import ATProto.MST.Encode   (encodeNode, cidForDagCbor)
@@ -108,7 +108,7 @@ data RecordOp = RecordOp
 -- traversed.
 fromBlockMap :: BlockMap -> CidBytes -> Either MstError MST
 fromBlockMap bmap cid = do
-  raw      <- maybe (Left (MstNodeNotFound (T.pack (show (unCidBytes cid)))))
+  raw      <- maybe (Left (MstNodeNotFound (cidToText cid)))
                     Right
                     (Map.lookup cid bmap)
   nodeData <- mapLeft (MstDecodeError . T.pack) (decodeNode raw)
