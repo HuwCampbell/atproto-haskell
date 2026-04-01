@@ -280,7 +280,7 @@ fallback def c = Codec
 -- Object / record builder
 -- ---------------------------------------------------------------------------
 
--- | Different list
+-- | Difference list
 --   This is used for performance reasons in the Struct Builder, so that
 --   concatenation and building isn't O(N²).
 type DList a = [a] -> [a]
