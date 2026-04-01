@@ -38,7 +38,7 @@ module ATProto.Lex.Codec
   , nullable
   , fallback
     -- * Object / record builder
-  , StructBuilder
+  , StructBuilder (..)
   , StructCodec
   , record
   , requiredField
@@ -358,7 +358,7 @@ requiredField name c proj = StructBuilder
 
 -- | Build an optional field.
 --
--- Decoding yields 'Nothing' when the key is absent or the value is 'LexNull'.
+-- Decoding yields 'Nothing' when the key is absent.
 optionalField
   :: T.Text          -- ^ Field name (JSON key)
   -> Codec a         -- ^ Value codec
@@ -369,7 +369,6 @@ optionalField name c proj = StructBuilder
   , sbDecoder = \m ->
         case Map.lookup name m of
             Nothing      -> Right Nothing
-            Just LexNull -> Right Nothing
             Just v       -> fmap Just (decoder c v)
   , sbWriter  = \b ->
         case proj b of
