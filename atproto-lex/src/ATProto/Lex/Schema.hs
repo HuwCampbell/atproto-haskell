@@ -75,7 +75,7 @@ data LexSchema
     -- ^ A blob reference (uploaded file).
   | LexSchemaArray   LexSchema
     -- ^ An ordered sequence of values sharing a common schema.
-  | LexSchemaObject  [LexField]
+  | LexSchemaObject  T.Text [LexField]
     -- ^ A string-keyed map with named, typed fields.
   | LexSchemaUnion   [LexUnionVariant]
     -- ^ A @$type@-discriminated sum type.
@@ -105,7 +105,7 @@ renderSchema (LexSchemaArray s)  =
         [ "type"  Aeson..= ("array" :: T.Text)
         , "items" Aeson..= renderSchema s
         ]
-renderSchema (LexSchemaObject fs) =
+renderSchema (LexSchemaObject _ fs) =
     Aeson.object
         [ "type"       Aeson..= ("object" :: T.Text)
         , "required"   Aeson..= [fieldName f | f <- fs, fieldRequired f]

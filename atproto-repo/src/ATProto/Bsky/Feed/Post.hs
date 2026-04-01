@@ -401,9 +401,9 @@ facetFeatureCodec =
   in
   Codec.invmap to from $
     Codec.union3
-      (Codec.unionVariant "app.bsky.richtext.facet#mention" facetMentionCodec)
-      (Codec.unionVariant "app.bsky.richtext.facet#link" facetLinkCodec)
-      (Codec.unionVariant "app.bsky.richtext.facet#tag" facetTagCodec)
+      facetMentionCodec
+      facetLinkCodec
+      facetTagCodec
 
 -- | Codec for 'Facet'.
 facetCodec :: Codec Facet
@@ -495,9 +495,9 @@ mediaEmbedCodec =
   in
   Codec.invmap to from $
     Codec.union3
-      (Codec.unionVariant "app.bsky.embed.images" embedImagesCodec)
-      (Codec.unionVariant "app.bsky.embed.video" embedVideoCodec)
-      (Codec.unionVariant "app.bsky.embed.external" embedExternalCodec)
+      embedImagesCodec
+      embedVideoCodec
+      embedExternalCodec
 
 -- | Codec for 'EmbedRecordWithMedia'.
 embedRecordWithMediaCodec :: Codec EmbedRecordWithMedia
@@ -527,11 +527,11 @@ postEmbedCodec =
   in
   Codec.invmap to from $
     Codec.union5
-      (Codec.unionVariant "app.bsky.embed.images" embedImagesCodec)
-      (Codec.unionVariant "app.bsky.embed.video" embedVideoCodec)
-      (Codec.unionVariant "app.bsky.embed.external" embedExternalCodec)
-      (Codec.unionVariant "app.bsky.embed.record" embedRecordCodec)
-      (Codec.unionVariant "app.bsky.embed.recordWithMedia" embedRecordWithMediaCodec)
+      embedImagesCodec
+      embedVideoCodec
+      embedExternalCodec
+      embedRecordCodec
+      embedRecordWithMediaCodec
 
 
 -- | Codec for 'SelfLabelValue'.
@@ -556,7 +556,7 @@ postLabelsCodec =
     to = PostLabelsSelf
   in
   Codec.invmap to from $
-    Codec.unionVariant "com.atproto.label.defs#selfLabels" selfLabelsCodec
+    selfLabelsCodec
 
 
 -- | Codec for 'FeedPost'.

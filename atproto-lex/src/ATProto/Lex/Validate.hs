@@ -128,8 +128,8 @@ validateUserType path _doc (LexString' lexStr) s =
 validateUserType path _doc (LexToken' _) s =
     -- Tokens are simple named constants; any schema is acceptable
     case s of
-      LexSchemaObject _ -> []
-      _                 -> [TypeMismatch path "token" (describeSchema s)]
+      LexSchemaObject _ _ -> []
+      _                   -> [TypeMismatch path "token" (describeSchema s)]
 validateUserType path _doc (LexBlob' _) s =
     case s of
       LexSchemaBlob -> []
@@ -172,7 +172,7 @@ validateObject path doc obj codecSchema =
       Just fields -> checkObject path doc obj fields
       Nothing     -> [TypeMismatch path "object" (describeSchema codecSchema)]
   where
-    unwrapObject (LexSchemaObject fs) = Just fs
+    unwrapObject (LexSchemaObject _ fs) = Just fs
     unwrapObject _                    = Nothing
 
 checkObject :: Path -> LexiconDoc -> LexObject -> [LexField] -> [ValidationError]
@@ -398,7 +398,7 @@ describeSchema LexSchemaBytes        = "bytes"
 describeSchema LexSchemaCid          = "cid-link"
 describeSchema LexSchemaBlob         = "blob"
 describeSchema (LexSchemaArray _)    = "array"
-describeSchema (LexSchemaObject _)   = "object"
+describeSchema (LexSchemaObject _ _) = "object"
 describeSchema (LexSchemaUnion _)    = "union"
 describeSchema (LexSchemaMaybe s)    = "maybe<" <> describeSchema s <> ">"
 describeSchema (LexSchemaRef r)      = "ref:" <> r

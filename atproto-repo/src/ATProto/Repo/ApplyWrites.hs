@@ -132,9 +132,9 @@ applyWritesOpCodec =
           Right (Right d) -> ApplyWritesOpDelete d
     in Codec.invmap to from $
        Codec.union3
-         (Codec.unionVariant "com.atproto.repo.applyWrites#create" applyWritesCreateCodec)
-         (Codec.unionVariant "com.atproto.repo.applyWrites#update" applyWritesUpdateCodec)
-         (Codec.unionVariant "com.atproto.repo.applyWrites#delete" applyWritesDeleteCodec)
+         applyWritesCreateCodec
+         applyWritesUpdateCodec
+         applyWritesDeleteCodec
 
 -- ---------------------------------------------------------------------------
 -- Request
@@ -241,9 +241,9 @@ applyWritesResultCodec =
           Right (Right d) -> ApplyWritesResultDelete d
     in Codec.invmap to from $
        Codec.union3
-         (Codec.unionVariant "com.atproto.repo.applyWrites#createResult" applyWritesCreateResultCodec)
-         (Codec.unionVariant "com.atproto.repo.applyWrites#updateResult" applyWritesUpdateResultCodec)
-         (Codec.unionVariant "com.atproto.repo.applyWrites#deleteResult" applyWritesDeleteResultCodec)
+         applyWritesCreateResultCodec
+         applyWritesUpdateResultCodec
+         applyWritesDeleteResultCodec
 
 -- ---------------------------------------------------------------------------
 -- Response

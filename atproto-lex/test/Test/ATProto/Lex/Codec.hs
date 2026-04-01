@@ -58,12 +58,10 @@ myUnionCodec =
   in
   Codec.invmap (either MyText MyInt) to $
     Codec.union
-      (Codec.unionVariant "example.text"
-        (Codec.record "example.text" $
-          Codec.requiredField "value" Codec.text id))
-      (Codec.unionVariant "example.int"
-        (Codec.record "example.int" $
-          Codec.requiredField "value" Codec.int id))
+      (Codec.record "example.text" $
+        Codec.requiredField "value" Codec.text id)
+      (Codec.record "example.int" $
+        Codec.requiredField "value" Codec.int id)
 
 -- ---------------------------------------------------------------------------
 -- 1. JSON round-trips for primitives
@@ -205,8 +203,8 @@ prop_primitiveSchemas = withTests 1 . property $ do
 prop_recordSchema :: Property
 prop_recordSchema = withTests 1 . property $ do
     case Codec.schema strongRefCodec of
-        LexSchemaObject fields -> length fields === 2
-        _                      -> failure
+        LexSchemaObject _ fields -> length fields === 2
+        _                        -> failure
 
 prop_arraySchema :: Property
 prop_arraySchema = withTests 1 . property $ do
