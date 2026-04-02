@@ -564,7 +564,6 @@ postLabelsCodec =
 -- Uses 'Codec.namedType' to prevent infinite schema expansion.
 feedPostCodec :: Codec FeedPost
 feedPostCodec =
-    Codec.namedType "app.bsky.feed.post" $
     Codec.record "app.bsky.feed.post" $
         FeedPost
             <$> Codec.requiredField "text"      Codec.text                              fpText
