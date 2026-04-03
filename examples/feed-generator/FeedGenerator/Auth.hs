@@ -14,7 +14,6 @@ import qualified Data.Map.Strict           as Map
 import qualified Data.Text                 as T
 
 import           ATProto.ServiceAuth       (ServiceJwtPayload (..), verifyServiceJwt)
-import           ATProto.XRPC.Types        (XrpcHeaders)
 import           ATProto.XRPC.Server.Types (AuthResult (..), AuthVerifier)
 
 import           FeedGenerator.Types       (AppEnv (..), AppM)
