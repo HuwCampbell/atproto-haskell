@@ -115,7 +115,7 @@ skeletonFeedItemCodec =
         SkeletonFeedItem
             <$> Codec.requiredField "post"        Codec.atUri                      sfiPost
             <*> Codec.optionalField "reason"      skeletonReasonCodec              sfiReason
-            <*> Codec.optionalField "feedContext"  Codec.text                       sfiFeedContext
+            <*> Codec.optionalField "feedContext" Codec.text                       sfiFeedContext
 
 -- | Codec for 'GetFeedSkeletonOutput'.
 getFeedSkeletonOutputCodec :: Codec GetFeedSkeletonOutput

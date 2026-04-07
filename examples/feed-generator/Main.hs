@@ -19,7 +19,7 @@
 module Main (main) where
 
 import           Control.Monad.Trans.Reader    (runReaderT)
-import qualified Data.ByteString.Lazy          as BL
+import qualified Data.Aeson                    as Aeson
 import qualified Data.Text                     as T
 import qualified Data.Text.IO                  as TIO
 import           Network.HTTP.Types            (status404, hContentType)
@@ -87,4 +87,4 @@ notFoundApp :: Application
 notFoundApp _req respond =
   respond $ responseLBS status404
     [(hContentType, "application/json")]
-    (BL.fromStrict "{\"error\":\"NotFound\"}")
+    (Aeson.encode (Aeson.object ["error" Aeson..= ("NotFound" :: T.Text)]))

@@ -47,11 +47,9 @@ handleGetFeedSkeleton req = do
         Just reqFeed | reqFeed /= feedUri ->
           return $ XrpcHandlerError "UnknownFeed" (Just "Feed not found")
         Just _ -> do
-          -- 3. Parse optional parameters.
-          let _limit  = maybe 50 (min 100 . max 1 . readInt) (Map.lookup "limit"  params)
-              _cursor = Map.lookup "cursor" params
-
           -- 4. Return a stubbed feed (empty for this example).
+          -- In a real implementation, parse and apply 'limit' and 'cursor'
+          -- from the query params to paginate results from a backing store.
           let output = GetFeedSkeletonOutput
                 { gfsCursor = Nothing
                 , gfsFeed   = exampleFeedItems
@@ -69,10 +67,3 @@ exampleFeedItems =
       , sfiFeedContext = Nothing
       }
   ]
-
--- | Parse a decimal integer from 'T.Text', returning 0 on failure.
-readInt :: T.Text -> Int
-readInt t =
-  case reads (T.unpack t) of
-    [(n, "")] -> n
-    _         -> 0
