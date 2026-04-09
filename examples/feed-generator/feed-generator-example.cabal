@@ -1,0 +1,54 @@
+cabal-version:      3.0
+name:               feed-generator-example
+version:            0.1.0.0
+synopsis:           AT Protocol feed generator example – service auth, XRPC server
+description:
+  A Haskell implementation of a minimal AT Protocol feed generator.
+
+  Demonstrates:
+
+    * Service-to-service JWT authentication via @atproto-haskell-service-auth@
+    * Serving XRPC endpoints with @atproto-haskell-xrpc-server@
+    * Implementing @app.bsky.feed.getFeedSkeleton@ using typed bindings from
+      @atproto-haskell-repo@
+
+  See <https://github.com/bluesky-social/feed-generator> for the reference
+  TypeScript implementation.
+
+license:            MIT
+author:             Huw Campbell
+maintainer:         huw.campbell@gmail.com
+category:           Network
+build-type:         Simple
+
+executable feed-generator
+  main-is:          Main.hs
+  other-modules:
+      FeedGenerator.Auth
+      FeedGenerator.Feed
+      FeedGenerator.Types
+  build-depends:
+      base                          >= 4.14 && < 5
+    , aeson                         >= 2.0  && < 2.3
+    , bytestring                    >= 0.10 && < 0.13
+    , case-insensitive
+    , containers                    >= 0.6  && < 0.9
+    , text                          >= 1.2  && < 2.2
+    , time                          >= 1.9  && < 1.15
+    , wai                           >= 3.2  && < 3.3
+    , warp                          >= 3.3  && < 3.5
+    , http-types                    >= 0.12 && < 0.13
+    , http-client                   >= 0.7  && < 0.8
+    , http-client-tls               >= 0.3  && < 0.5
+    , atproto-haskell-did
+    , atproto-haskell-lex
+    , atproto-haskell-repo
+    , atproto-haskell-service-auth
+    , atproto-haskell-syntax
+    , atproto-haskell-xrpc
+    , atproto-haskell-xrpc-server
+    , transformers               >= 0.5  && < 0.7
+  hs-source-dirs:   .
+  default-extensions: OverloadedStrings
+  default-language:   Haskell2010
+  ghc-options:        -Wall -threaded

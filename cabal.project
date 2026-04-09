@@ -20,6 +20,7 @@ packages:
   atproto-xrpc-server/
   atproto-xrpc/
   examples/oauth-cli/
+  examples/feed-generator/
   examples/statusphere-og/
   examples/statusphere-spa/
 

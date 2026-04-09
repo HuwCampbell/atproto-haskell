@@ -26,8 +26,10 @@ module ATProto.Identity.Handle
   ) where
 
 import           Control.Exception         (SomeException, catch)
+import           Control.Monad             (guard)
 import qualified Data.ByteString.Char8     as BC
 import qualified Data.ByteString.Lazy      as BL
+import qualified Data.List                 as List
 import qualified Data.Text                 as T
 import qualified Data.Text.Encoding        as TE
 import           Network.DNS               (FileOrNumericHost (..),
@@ -134,14 +136,13 @@ resolveHandleHttp r handle =
       req  <- parseRequest url
       resp <- httpLbs req (hrManager r)
       let status = statusCode (responseStatus resp)
-      if status == 200
-        then
-          let body      = TE.decodeUtf8Lenient (BL.toStrict (responseBody resp))
-              firstLine = T.strip (head (T.lines body ++ [""]))
-          in  if "did:" `T.isPrefixOf` firstLine
-                then return (Just firstLine)
-                else return Nothing
-        else return Nothing
+      return $ do
+        guard $ status == 200
+        let body        = TE.decodeUtf8Lenient (BL.toStrict (responseBody resp))
+        (firstLine, _) <- List.uncons (T.lines body)
+        guard $ "did:" `T.isPrefixOf` firstLine
+        Just firstLine
+
 
 -- | Retry DNS resolution using backup nameserver IPs.
 resolveHandleDnsBackup :: HandleResolver -> T.Text -> IO (Maybe T.Text)
