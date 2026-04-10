@@ -40,6 +40,7 @@ import Prelude hiding (lookup)
 import qualified Data.ByteString      as BS
 import qualified Data.List.NonEmpty   as NE
 import qualified Data.Map.Strict      as Map
+import           Data.Maybe           (maybeToList)
 import qualified Data.Text            as T
 import qualified Data.Text.Encoding   as TE
 
@@ -129,7 +130,7 @@ loadEntries bmap prevKey entries mLeft = do
     Just cid -> do sub <- fromBlockMap bmap cid
                    return [SubTree sub]
   entryNodes <- goEntries prevKey entries
-  return (leftEntries ++ entryNodes)
+  return (leftEntries <> entryNodes)
   where
     goEntries _ [] = Right []
     goEntries prev (te:rest) = do
@@ -142,7 +143,7 @@ loadEntries bmap prevKey entries mLeft = do
                        return [SubTree sub]
       let leaf = Leaf fullKey (teValue te)
       restNodes <- goEntries fullKey rest
-      return (leaf : rightEntries ++ restNodes)
+      return (leaf : rightEntries <> restNodes)
 
 -- | Serialise an MST to a 'BlockMap' by folding over the tree, collecting
 -- @(cid, encodedNodeBytes)@ pairs.
@@ -228,7 +229,7 @@ buildNodeEntries :: Maybe MST -> [LayerGroup] -> Int -> [NodeEntry]
 buildNodeEntries mLeft groups layer =
   let leftEntry   = maybe [] (\sub -> [SubTree sub]) mLeft
       rightGroups = concatMap buildGroup groups
-  in leftEntry ++ rightGroups
+  in leftEntry <> rightGroups
   where
     buildGroup (key, val, rightGroup) =
       let mRight     = (\rs -> buildAtLayer rs (layer - 1)) <$> NE.nonEmpty rightGroup
@@ -346,11 +347,11 @@ verifyProofs mst = mapM_ checkOp
         (Nothing, Nothing)                -> Right ()
         (Just c,  Just e)   | c == e      -> Right ()
                             | otherwise   -> Left (MstDecodeError
-            (T.pack ("CID mismatch for key " ++ T.unpack key)))
+            (T.pack ("CID mismatch for key " <> T.unpack key)))
         (Nothing, Just _)                 -> Left (MstDecodeError
-            (T.pack ("expected key present but absent: " ++ T.unpack key)))
+            (T.pack ("expected key present but absent: " <> T.unpack key)))
         (Just _,  Nothing)                -> Left (MstDecodeError
-            (T.pack ("expected key absent but present: " ++ T.unpack key)))
+            (T.pack ("expected key absent but present: " <> T.unpack key)))
 
 -- ---------------------------------------------------------------------------
 -- Mutation
@@ -410,10 +411,12 @@ insertLeafAtLevel key val = go
           -- The new key belongs at or before the next leaf, so it may
           -- land inside this subtree.  Split the subtree at `key`.
           let (mLeft, mRight) = splitAtKey key mst
-          in  maybe [] (\l -> [SubTree l]) mLeft
-              ++ [newLeaf]
-              ++ maybe [] (\r -> [SubTree r]) mRight
-              ++ rest
+          in  mconcat [
+                maybeToList (SubTree <$> mLeft)
+              , [newLeaf]
+              , maybeToList (SubTree <$> mRight)
+              , rest
+              ]
 
 -- | Descend into the appropriate subtree, creating one when none exists.
 --

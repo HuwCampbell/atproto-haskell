@@ -45,6 +45,7 @@ import qualified Data.ByteString      as BS
 import qualified Data.ByteString.Lazy as BL
 import qualified Data.List            as List
 import qualified Data.Map.Strict      as Map
+import Data.Maybe                     (mapMaybe, maybeToList)
 import qualified Data.Text            as T
 import qualified Codec.CBOR.Decoding  as D
 import qualified Codec.CBOR.Read      as R
@@ -375,15 +376,12 @@ collectMstBlocks store rootCid = go Map.empty [rootCid]
                 Right nd ->
                   let bmap' = Map.insert cid raw bmap
                       children = nodeChildren nd
-                  in go bmap' (children ++ rest)
+                  in go bmap' (children <> rest)
 
     nodeChildren :: NodeData -> [CidBytes]
     nodeChildren nd =
-      maybe [] (:[]) (nodeLeft nd) ++
-      concatMap entryChildren (nodeEntries nd)
-
-    entryChildren :: TreeEntry -> [CidBytes]
-    entryChildren te = maybe [] (:[]) (teRightTree te)
+      maybeToList (nodeLeft nd) <>
+        mapMaybe teRightTree (nodeEntries nd)
 
 -- | Load a record block by its CID.
 loadRecord
