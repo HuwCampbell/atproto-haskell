@@ -35,7 +35,7 @@ handleGetFeedSkeleton req = do
   -- 1. Require authentication.
   case xsrCaller req of
     Nothing ->
-      return $ XrpcHandlerError "AuthRequired" (Just "Authenticated requests only")
+      return $ XrpcUnauthorised "AuthRequired" (Just "Authenticated requests only")
     Just _callerDid -> do
       feedUri <- asks envFeedUri
 
@@ -43,9 +43,9 @@ handleGetFeedSkeleton req = do
       let params = xsrParams req
       case Map.lookup "feed" params of
         Nothing ->
-          return $ XrpcHandlerError "InvalidRequest" (Just "Missing required parameter: feed")
+          return $ XrpcBadRequest "InvalidRequest" (Just "Missing required parameter: feed")
         Just reqFeed | reqFeed /= feedUri ->
-          return $ XrpcHandlerError "UnknownFeed" (Just "Feed not found")
+          return $ XrpcBadRequest "UnknownFeed" (Just "Feed not found")
         Just _ -> do
           -- 4. Return a stubbed feed (empty for this example).
           -- In a real implementation, parse and apply 'limit' and 'cursor'

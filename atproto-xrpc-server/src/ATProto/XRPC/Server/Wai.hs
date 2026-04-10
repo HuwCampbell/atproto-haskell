@@ -125,8 +125,10 @@ resultToResponse (XrpcSuccess body) =
   responseLBS status200 [(hContentType, "application/json")] body
 resultToResponse XrpcAccepted =
   responseLBS status202 [] BL.empty
-resultToResponse (XrpcHandlerError code msg) =
+resultToResponse (XrpcBadRequest code msg) =
   errorResponse status400 code msg
+resultToResponse (XrpcUnauthorised code msg) =
+  unauthorizedResponse code msg
 
 -- | Decode WAI query parameters into a plain 'Map'.
 buildParams :: Request -> Map.Map T.Text T.Text

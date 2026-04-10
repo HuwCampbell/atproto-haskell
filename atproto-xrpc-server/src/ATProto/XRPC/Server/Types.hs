@@ -44,10 +44,13 @@ data XrpcHandlerResult
     -- ^ Successful response: HTTP 200 with the supplied body.
   | XrpcAccepted
     -- ^ Accepted: HTTP 202, no body.
-  | XrpcHandlerError T.Text (Maybe T.Text)
+  | XrpcBadRequest T.Text (Maybe T.Text)
     -- ^ Handler-level error serialised as @{\"error\":\"...\",\"message\":\"...\"}@.
-    -- Returns HTTP 400.  The first field is the machine-readable error token;
-    -- the second is an optional human-readable message.
+    -- Returns HTTP 400. The first field is the machine-readable error token;
+    -- the second, an optional human-readable message.
+  | XrpcUnauthorised T.Text (Maybe T.Text)
+    -- ^ Handler-level error serialised as @{\"error\":\"...\",\"message\":\"...\"}@.
+    -- Returns HTTP 401.
 
 -- | A handler for a single XRPC endpoint.
 --
