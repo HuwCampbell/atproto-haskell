@@ -415,7 +415,7 @@ exportRepoCar
   :: (BlockStore s, RepoStore s)
   => s
   -> DID
-  -> IO (Either PdsError BS.ByteString)
+  -> IO (Either PdsError BL.ByteString)
 exportRepoCar store did = do
   mHead <- getRepoHead store did
   case mHead of
@@ -455,10 +455,10 @@ importRepoCar
   :: (BlockStore s, RepoStore s)
   => s
   -> DID
-  -> BS.ByteString    -- ^ CAR bytes
+  -> BL.ByteString    -- ^ CAR bytes
   -> IO (Either PdsError CidBytes)
 importRepoCar store did carBytes =
-  case readCarWithRoot carBytes of
+  case readCarWithRoot (BL.toStrict carBytes) of
     Left err -> return (Left (mapCarError err))
     Right (rootCid, blocks) -> do
       -- Store all blocks.

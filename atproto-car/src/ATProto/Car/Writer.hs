@@ -17,11 +17,13 @@ module ATProto.Car.Writer
   , writeCarWithRoot
   ) where
 
-import qualified Data.ByteString      as BS
-import qualified Data.ByteString.Lazy as BL
-import qualified Data.Map.Strict      as Map
-import qualified Codec.CBOR.Encoding  as E
-import qualified Codec.CBOR.Write     as W
+import qualified Data.ByteString         as BS
+import qualified Data.ByteString.Lazy    as BL
+import           Data.ByteString.Builder (Builder)
+import qualified Data.ByteString.Builder as Builder
+import qualified Data.Map.Strict         as Map
+import qualified Codec.CBOR.Encoding     as E
+import qualified Codec.CBOR.Write        as W
 
 import ATProto.Car.Cid       (CidBytes, encodeVarint, unsafeCidBytes)
 import ATProto.Car.BlockMap  (BlockMap)
@@ -36,15 +38,17 @@ import ATProto.Car.DagCbor   (encodeCidTag42)
 -- The blocks are written in the ascending CID order of the underlying
 -- 'Map'.  Every CID mentioned as a root should be present in the block
 -- map, but this is not enforced.
-writeCar :: [CidBytes] -> BlockMap -> BS.ByteString
+writeCar :: [CidBytes] -> BlockMap -> BL.ByteString
 writeCar roots blocks =
   let hdrBytes  = encodeHeader roots
       hdrLen    = encodeVarint (BS.length hdrBytes)
       blockSeq  = encodeBlocks blocks
-  in hdrLen <> hdrBytes <> blockSeq
+      builder   = hdrLen <> Builder.byteString hdrBytes <> blockSeq
+  in
+    Builder.toLazyByteString builder
 
 -- | Encode a CAR v1 file with exactly one root CID.
-writeCarWithRoot :: CidBytes -> BlockMap -> BS.ByteString
+writeCarWithRoot :: CidBytes -> BlockMap -> BL.ByteString
 writeCarWithRoot root = writeCar [root]
 
 -- ---------------------------------------------------------------------------
@@ -56,25 +60,26 @@ writeCarWithRoot root = writeCar [root]
 -- @{ \"version\": 1, \"roots\": [tag42(cid), ...] }@
 encodeHeader :: [CidBytes] -> BS.ByteString
 encodeHeader roots =
-  BL.toStrict . W.toLazyByteString $
-       E.encodeMapLen 2
-    <> E.encodeString "version"
-    <> E.encodeWord 1
-    <> E.encodeString "roots"
-    <> E.encodeListLen (fromIntegral (length roots))
-    <> mconcat [ encodeCidTag42 cid | cid <- roots ]
+  W.toStrictByteString $ mconcat
+    [ E.encodeMapLen 2
+    , E.encodeString "version"
+    , E.encodeWord 1
+    , E.encodeString "roots"
+    , E.encodeListLen (fromIntegral (length roots))
+    , mconcat [ encodeCidTag42 cid | cid <- roots ]
+    ]
 
 -- ---------------------------------------------------------------------------
 -- Block sequence encoding
 -- ---------------------------------------------------------------------------
 
 -- | Encode all blocks as the data section of a CAR file.
-encodeBlocks :: BlockMap -> BS.ByteString
-encodeBlocks = Map.foldlWithKey' encodeBlock BS.empty
+encodeBlocks :: BlockMap -> Builder
+encodeBlocks = Map.foldlWithKey' encodeBlock mempty
 
 -- | Encode a single block entry: @varint(len) ++ cid_bytes ++ block_bytes@.
-encodeBlock :: BS.ByteString -> CidBytes -> BS.ByteString -> BS.ByteString
+encodeBlock :: Builder -> CidBytes -> BS.ByteString -> Builder
 encodeBlock acc cid blockBytes =
   let entryLen = BS.length (unsafeCidBytes cid) + BS.length blockBytes
-      entry    = encodeVarint entryLen <> unsafeCidBytes cid <> blockBytes
+      entry    = encodeVarint entryLen <> Builder.byteString (unsafeCidBytes cid) <> Builder.byteString blockBytes
   in acc <> entry
