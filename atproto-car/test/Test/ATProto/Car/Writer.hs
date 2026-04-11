@@ -4,6 +4,9 @@ import Hedgehog
 import qualified Hedgehog.Gen   as Gen
 import qualified Hedgehog.Range as Range
 import qualified Data.ByteString as BS
+import qualified Data.ByteString.Lazy as BL
+
+import qualified Data.ByteString.Builder as Builder
 import qualified Data.Map.Strict as Map
 
 import ATProto.Car.Cid    (CidBytes (..), cidForDagCbor)
@@ -39,7 +42,7 @@ prop_writeReadRoundTrip = property $ do
   blocks <- forAll genBlockMap
   let root    = fst (Map.findMin blocks)
       car     = writeCarWithRoot root blocks
-  case readCarWithRoot car of
+  case readCarWithRoot (BL.toStrict car) of
     Left err      -> do
       annotate (show err)
       failure
@@ -53,7 +56,7 @@ prop_multiRootRoundTrip = property $ do
   blocks <- forAll genBlockMap
   let roots   = Map.keys blocks
       car     = writeCar roots blocks
-  case readCar car of
+  case readCar (BL.toStrict car) of
     Left err           -> do
       annotate (show err)
       failure
@@ -67,7 +70,7 @@ prop_emptyBlockMap = property $ do
   let root   = cidForDagCbor BS.empty
       blocks = Map.singleton root BS.empty
       car    = writeCarWithRoot root blocks
-  case readCarWithRoot car of
+  case readCarWithRoot (BL.toStrict car) of
     Left err           -> do
       annotate (show err)
       failure
@@ -86,7 +89,7 @@ prop_knownVector = property $ do
   -- We can't check byte-equality with the hand-crafted test fixture
   -- because header field order might differ (version/roots vs roots/version).
   -- Instead we check the round-trip.
-  case readCarWithRoot car of
+  case readCarWithRoot (BL.toStrict car) of
     Left err           -> do
       annotate (show err)
       failure

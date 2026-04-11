@@ -4,21 +4,15 @@ import Hedgehog
 import qualified Hedgehog.Gen   as Gen
 import qualified Hedgehog.Range as Range
 import qualified Data.ByteString as BS
+import qualified Data.ByteString.Lazy as BL
+import qualified Data.ByteString.Builder as Builder
 import qualified Data.Text       as T
-import           Data.Bits       (shiftR, (.|.))
-import           Data.Word       (Word8)
 
-import           ATProto.Car.Cid hiding (encodeVarint)
+import           ATProto.Car.Cid
 
 -- ---------------------------------------------------------------------------
 -- Generator
 -- ---------------------------------------------------------------------------
-
--- | Encode a non-negative integer as an unsigned LEB-128 varint.
-encodeVarint :: Int -> [Word8]
-encodeVarint n
-  | n < 0x80  = [fromIntegral n]
-  | otherwise = fromIntegral (n .|. 0x80) : encodeVarint (n `shiftR` 7)
 
 -- | Generator for structurally valid CIDv1 bytes.
 --
@@ -34,10 +28,14 @@ genCidBytes = do
   hfCode <- Gen.element [0x12, 0x14, 0x1b]  -- 0x12 = sha2-256, 0x14 = sha2-512, 0x1b = keccak-256
   dLen   <- Gen.int (Range.linear 1 64)
   digest <- Gen.bytes (Range.singleton dLen)
-  let header = BS.pack ([0x01]
-                        ++ encodeVarint codec
-                        ++ encodeVarint hfCode
-                        ++ encodeVarint dLen)
+  let
+    header =
+      BL.toStrict . Builder.toLazyByteString . mconcat $
+        [ Builder.word8 0x01
+        , encodeVarint codec
+        , encodeVarint hfCode
+        , encodeVarint dLen
+        ]
   pure (unsafeRawCid (header <> digest))
 
 -- ---------------------------------------------------------------------------

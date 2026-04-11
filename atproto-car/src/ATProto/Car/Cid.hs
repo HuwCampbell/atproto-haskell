@@ -31,6 +31,7 @@ module ATProto.Car.Cid
 import           Data.Bits  (shiftR, shiftL, (.|.), (.&.))
 import           Data.Word  (Word8)
 import qualified Data.ByteString as BS
+import qualified Data.ByteString.Builder as Builder
 import qualified Data.ByteArray  as BA
 import qualified Data.Text       as T
 import qualified Crypto.Hash     as H
@@ -63,11 +64,10 @@ cidForDagCbor raw =
 -- ---------------------------------------------------------------------------
 
 -- | Encode a non-negative integer as an unsigned LEB-128 varint.
-encodeVarint :: Int -> BS.ByteString
+encodeVarint :: Int -> Builder.Builder
 encodeVarint n
-  | n < 0x80  = BS.singleton (fromIntegral n)
-  | otherwise = BS.cons (fromIntegral (n .|. 0x80))
-                        (encodeVarint (n `shiftR` 7))
+  | n < 0x80  = Builder.word8 (fromIntegral n)
+  | otherwise = Builder.word8 (fromIntegral (n .|. 0x80)) <> encodeVarint (n `shiftR` 7)
 
 -- | Decode an unsigned LEB-128 varint from a 'BS.ByteString' starting at
 -- @offset@.  Returns @(value, bytesConsumed)@ or an error.
