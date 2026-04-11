@@ -80,6 +80,7 @@ encodeBlocks = Map.foldlWithKey' encodeBlock mempty
 -- | Encode a single block entry: @varint(len) ++ cid_bytes ++ block_bytes@.
 encodeBlock :: Builder -> CidBytes -> BS.ByteString -> Builder
 encodeBlock acc cid blockBytes =
-  let entryLen = BS.length (unsafeCidBytes cid) + BS.length blockBytes
-      entry    = encodeVarint entryLen <> Builder.byteString (unsafeCidBytes cid) <> Builder.byteString blockBytes
+  let cidRaw   = unsafeCidBytes cid
+      entryLen = BS.length cidRaw + BS.length blockBytes
+      entry    = encodeVarint entryLen <> Builder.byteString cidRaw <> Builder.byteString blockBytes
   in acc <> entry
