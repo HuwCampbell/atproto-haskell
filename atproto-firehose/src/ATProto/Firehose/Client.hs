@@ -16,7 +16,7 @@ module ATProto.Firehose.Client
   ) where
 
 import           Control.Exception        (SomeException, try)
-import           Control.Monad            (forever)
+import           Control.Monad            (forever, guard)
 import           Data.IORef
 import qualified Data.ByteString          as BS
 import qualified Data.Text                as T
@@ -29,6 +29,7 @@ import qualified ATProto.MST.Verify      as MV
 import ATProto.Repo.Verify               (verifyCommitCar, VerifyError (..))
 import ATProto.Firehose.Events
 import ATProto.Firehose.Frame            (decodeFrame, FrameError (..))
+import ATProto.Car                       (textToCidBytes)
 
 -- ---------------------------------------------------------------------------
 -- Configuration types
@@ -136,36 +137,30 @@ runAuthFirehose authCfg =
               -- Resolution failed entirely
               afcOnUnverifiable authCfg ce ("DID resolution failed: " ++ err)
             Right doc1 -> do
-              let ops = map toRecordOp (ceOps ce)
-              case verifyCommitCar doc1 did (ceBlocks ce) ops of
-                Right writes ->
-                  afcOnVerified authCfg ce writes
-                Left VerifyBadSig -> do
-                  -- Retry with a fresh DID document (possible key rotation)
-                  mDoc2 <- afcResolveDid authCfg did
-                  case mDoc2 of
-                    Left err2 ->
-                      afcOnUnverifiable authCfg ce ("DID resolution retry failed: " ++ err2)
-                    Right doc2 ->
-                      case verifyCommitCar doc2 did (ceBlocks ce) ops of
-                        Right writes ->
-                          afcOnVerified authCfg ce writes
-                        Left err2 ->
-                          afcOnUnverifiable authCfg ce (show err2)
-                Left err ->
-                  afcOnUnverifiable authCfg ce (show err)
+              case traverse toRecordOp (ceOps ce) of
+                Left err1 ->
+                  afcOnUnverifiable authCfg ce ("Parsing CID failed: " ++ err1)
+                Right ops ->
+                  case verifyCommitCar doc1 did (ceBlocks ce) ops of
+                    Right writes ->
+                      afcOnVerified authCfg ce writes
+                    Left err ->
+                      afcOnUnverifiable authCfg ce (show err)
     handleEvent evt =
       -- Pass non-commit events through unchanged
       fcOnEvent (afcBase authCfg) evt
 
-toRecordOp :: RepoOp -> MV.RecordOp
-toRecordOp rop =
-  let (col, rkey) = splitPath (ropPath rop)
-  in MV.RecordOp
-       { MV.ropCollection = col
-       , MV.ropRkey       = rkey
-       , MV.ropCid        = Nothing
-       }
+toRecordOp :: RepoOp -> Either String MV.RecordOp
+toRecordOp (RepoOp action path cidText) = do
+  cid <- traverse textToCidBytes cidText
+  let (col, rkey) = splitPath path
+  pure $ MV.RecordOp
+      { MV.ropCollection = col
+      , MV.ropRkey       = rkey
+      , MV.ropCid        = do
+          guard (action /= OpDelete)
+          cid
+      }
 
 splitPath :: T.Text -> (T.Text, T.Text)
 splitPath t =

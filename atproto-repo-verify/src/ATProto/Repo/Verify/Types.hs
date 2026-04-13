@@ -10,6 +10,8 @@ import qualified Data.ByteString as BS
 import qualified Data.Text       as T
 
 import ATProto.Car.Cid (CidBytes)
+import ATProto.MST.Types (MstError)
+import ATProto.Car (CarError)
 
 -- | A decoded AT Protocol repository commit.
 data Commit = Commit
@@ -37,9 +39,9 @@ data VerifyError
     -- ^ The commit signature does not match the signing key.
   | VerifyDidMismatch T.Text T.Text
     -- ^ The commit's DID field does not match the expected DID.
-  | VerifyMstError T.Text
+  | VerifyMstError MstError
     -- ^ An MST-layer error occurred.
-  | VerifyCarError T.Text
+  | VerifyCarError CarError
     -- ^ A CAR-layer error occurred.
   | VerifyCommitDecodeError String
     -- ^ CBOR decoding of the commit block failed.

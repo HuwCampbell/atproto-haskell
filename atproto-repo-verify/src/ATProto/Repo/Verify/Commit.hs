@@ -179,23 +179,22 @@ verifyCommitCar doc expectedDid carBytes ops = do
   -- 2. Decode commit
   commit          <- decodeCommit bmap rootCid
   -- 3. DID check
-  if commitDid commit /= expectedDid
-    then Left (VerifyDidMismatch (commitDid commit) expectedDid)
-    else do
-      -- 4. Key extraction
-      pubKey <- resolveAtprotoKey doc
-      -- 5. Signature verification
-      verifyCommitSig commit pubKey
-      -- 6. MST proof verification
-      mapMstError (verifyProofs bmap (commitData commit) ops)
-      -- 7. Tree diff
-      mapMstError (mstDiff bmap Nothing (commitData commit))
+  if commitDid commit /= expectedDid then
+    Left (VerifyDidMismatch (commitDid commit) expectedDid)
+  else do
+    -- 4. Key extraction
+    pubKey <- resolveAtprotoKey doc
+    -- 5. Signature verification
+    verifyCommitSig commit pubKey
+    -- 6. MST proof verification
+    mapMstError (verifyProofs bmap (commitData commit) ops)
+    -- 7. Tree diff
+    mapMstError (mstDiff bmap Nothing (commitData commit))
   where
     mapCarError :: Either CarError a -> Either VerifyError a
-    mapCarError (Left err)  = Left (VerifyCarError (T.pack (show err)))
+    mapCarError (Left err)  = Left (VerifyCarError err)
     mapCarError (Right x)   = Right x
 
     mapMstError :: Either MstError a -> Either VerifyError a
-    mapMstError (Left (MstNodeNotFound t)) = Left (VerifyMstError t)
-    mapMstError (Left (MstDecodeError  t)) = Left (VerifyMstError t)
-    mapMstError (Right x)                  = Right x
+    mapMstError (Left err)  = Left (VerifyMstError err)
+    mapMstError (Right x)   = Right x
