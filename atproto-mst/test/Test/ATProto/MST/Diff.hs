@@ -56,13 +56,11 @@ import Prelude hiding (lookup)
 -- ---------------------------------------------------------------------------
 
 -- | Compute the set of blocks that differ between two block maps.
--- Returns only blocks whose CID is either new or has changed content.
+-- Returns only blocks whose CID is present in @new@ but not in @old@.
+-- In content-addressed storage, a CID present in both maps always has
+-- the same content, so only genuinely new CIDs are returned.
 diffBlocks :: BlockMap -> BlockMap -> BlockMap
-diffBlocks old new = Map.differenceWith changed new old
-  where
-    changed newVal oldVal
-      | newVal == oldVal = Nothing     -- same content, drop it
-      | otherwise        = Just newVal -- content changed (shouldn't happen for CAS)
+diffBlocks old new = Map.difference new old
 
 -- | True when the MST has at least one 'SubTree' entry in its root node.
 hasSubtrees :: MST -> Bool
