@@ -16,7 +16,7 @@ module ATProto.Firehose.Client
   ) where
 
 import           Control.Exception        (SomeException, try)
-import           Control.Monad            (forever, guard)
+import           Control.Monad            (forever)
 import           Data.IORef
 import qualified Data.ByteString          as BS
 import qualified Data.Text                as T
@@ -24,9 +24,8 @@ import qualified Network.WebSockets       as WS
 import qualified Wuss
 
 import ATProto.DID.Document              (DidDocument)
-import ATProto.MST.Diff                  (WriteDescr)
 import qualified ATProto.MST.Verify      as MV
-import ATProto.Repo.Verify               (verifyCommitCar, VerifyError (..))
+import ATProto.Repo.Verify               (verifyCommitCar)
 import ATProto.Firehose.Events
 import ATProto.Firehose.Frame            (decodeFrame, FrameError (..))
 import ATProto.Car                       (textToCidBytes)
@@ -65,7 +64,7 @@ data AuthFirehoseConfig = AuthFirehoseConfig
   , afcResolveDid     :: T.Text -> IO (Either String DidDocument)
     -- ^ Resolve a DID string to a DID document.  Called for each commit event.
     -- Should implement key-rotation retry (call twice on failure).
-  , afcOnVerified     :: CommitEvent -> [WriteDescr] -> IO ()
+  , afcOnVerified     :: CommitEvent -> [RepoOp] -> IO ()
     -- ^ Invoked with the verified event and its write list on success.
   , afcOnUnverifiable :: CommitEvent -> String -> IO ()
     -- ^ Invoked when the commit cannot be verified (e.g. @tooBig = True@).
@@ -142,8 +141,8 @@ runAuthFirehose authCfg =
                   afcOnUnverifiable authCfg ce ("Parsing CID failed: " ++ err1)
                 Right ops ->
                   case verifyCommitCar doc1 did (ceBlocks ce) ops of
-                    Right writes ->
-                      afcOnVerified authCfg ce writes
+                    Right () ->
+                      afcOnVerified authCfg ce (ceOps ce)
                     Left err ->
                       afcOnUnverifiable authCfg ce (show err)
     handleEvent evt =
@@ -151,18 +150,10 @@ runAuthFirehose authCfg =
       fcOnEvent (afcBase authCfg) evt
 
 toRecordOp :: RepoOp -> Either String MV.RecordOp
-toRecordOp (RepoOp action path cidText) = do
-  cid <- traverse textToCidBytes cidText
-  let (col, rkey) = splitPath path
-  pure $ MV.RecordOp
-      { MV.ropCollection = col
-      , MV.ropRkey       = rkey
-      , MV.ropCid        = do
-          guard (action /= OpDelete)
-          cid
+toRecordOp (RepoOp _ path cidText _) = do
+  mCid  <- traverse textToCidBytes cidText
+  return
+    MV.RecordOp
+      { MV.ropKey        = path
+      , MV.ropCid        = mCid
       }
-
-splitPath :: T.Text -> (T.Text, T.Text)
-splitPath t =
-  case T.breakOn "/" t of
-    (col, rest) -> (col, T.drop 1 rest)

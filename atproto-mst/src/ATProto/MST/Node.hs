@@ -77,7 +77,7 @@ parseNodeMap n mL mE = do
       parseNodeMap (n - 1) (Just cid) mE
     "e" -> do
       len     <- D.decodeListLen
-      entries <- mapM (\_ -> decodeTreeEntry) [1..len]
+      entries <- mapM (const decodeTreeEntry) [1..len]
       parseNodeMap (n - 1) mL (Just entries)
     _   -> do
       -- Skip unknown field value

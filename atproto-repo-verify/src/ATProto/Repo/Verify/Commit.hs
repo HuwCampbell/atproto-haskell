@@ -20,6 +20,7 @@ module ATProto.Repo.Verify.Commit
 import qualified Data.ByteString      as BS
 import qualified Data.ByteString.Lazy as BL
 import qualified Data.Map.Strict      as Map
+import qualified Data.Maybe           as Maybe
 import qualified Data.Text            as T
 import qualified Codec.CBOR.Decoding  as D
 import qualified Codec.CBOR.Read      as R
@@ -166,13 +167,12 @@ verifyCommitSig c pubKey =
 -- 4. Extract the @#atproto@ signing key from the DID document.
 -- 5. Verify the commit signature.
 -- 6. Verify MST proofs against @commit.data@.
--- 7. Compute and return the write list via 'mstDiff'.
 verifyCommitCar
   :: DidDocument
   -> T.Text          -- ^ expected DID (from firehose event)
   -> BS.ByteString   -- ^ raw CAR bytes (evt.blocks)
   -> [RecordOp]      -- ^ ops asserted by the event
-  -> Either VerifyError [WriteDescr]
+  -> Either VerifyError ()
 verifyCommitCar doc expectedDid carBytes ops = do
   -- 1. Parse CAR
   (rootCid, bmap) <- mapCarError (readCarWithRoot carBytes)
@@ -188,8 +188,7 @@ verifyCommitCar doc expectedDid carBytes ops = do
     verifyCommitSig commit pubKey
     -- 6. MST proof verification
     mapMstError (verifyProofs bmap (commitData commit) ops)
-    -- 7. Tree diff
-    mapMstError (mstDiff bmap Nothing (commitData commit))
+
   where
     mapCarError :: Either CarError a -> Either VerifyError a
     mapCarError (Left err)  = Left (VerifyCarError err)
@@ -198,3 +197,4 @@ verifyCommitCar doc expectedDid carBytes ops = do
     mapMstError :: Either MstError a -> Either VerifyError a
     mapMstError (Left err)  = Left (VerifyMstError err)
     mapMstError (Right x)   = Right x
+
