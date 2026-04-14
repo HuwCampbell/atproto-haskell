@@ -80,7 +80,7 @@ data WriteDescr
     -- ^ A key present in the new tree but not in the old tree.
   | WUpdate { wdKey :: T.Text, wdPrev :: CidBytes, wdCid :: CidBytes }
     -- ^ A key present in both trees with different values.
-  | WDelete { wdKey :: T.Text, wdCid :: CidBytes }
+  | WDelete { wdKey :: T.Text, wdPrev :: CidBytes }
     -- ^ A key present in the old tree but absent from the new tree.
   deriving (Eq, Show)
 
@@ -90,9 +90,7 @@ data WriteDescr
 
 -- | An assertion about a single record in the repository.
 data RecordOp = RecordOp
-  { ropCollection :: T.Text
-    -- ^ The Lexicon collection NSID, e.g. @\"app.bsky.feed.post\"@.
-  , ropRkey       :: T.Text
+  { ropKey       :: T.Text
     -- ^ The record key within the collection.
   , ropCid        :: Maybe CidBytes
     -- ^ Expected CID.  'Nothing' asserts the record is absent.
@@ -340,8 +338,7 @@ computeDiff olds@((ok, ov):ot) news@((nk, nv):nt)
 verifyProofs :: MST -> [RecordOp] -> Either MstError ()
 verifyProofs mst = mapM_ checkOp
   where
-    checkOp (RecordOp col rkey expectedCid) = do
-      let key = col <> "/" <> rkey
+    checkOp (RecordOp key expectedCid) = do
       let foundCid = lookup key mst
       case (foundCid, expectedCid) of
         (Nothing, Nothing)                -> Right ()

@@ -17,10 +17,6 @@ import ATProto.Car.Parser   (readCarWithRoot)
 import ATProto.MST.Node     (NodeData (..), TreeEntry (..), decodeNode)
 import ATProto.MST.Encode   (encodeNode)
 import ATProto.MST.Tree
-  ( WriteDescr (..)
-  , fromList, fromNonEmpty, toList, lookup, insert, singleton
-  , mstCid
-  )
 import qualified ATProto.MST.Tree as Tree
 
 import Prelude hiding (lookup)

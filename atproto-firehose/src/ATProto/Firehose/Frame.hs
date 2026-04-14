@@ -217,7 +217,7 @@ decodeRepoOps = do
 decodeRepoOp :: D.Decoder s RepoOp
 decodeRepoOp = do
   n <- D.decodeMapLen
-  go n (RepoOp OpCreate "" Nothing)
+  go n (RepoOp OpCreate "" Nothing Nothing)
   where
     go 0 e = return e
     go n e = do
@@ -226,6 +226,7 @@ decodeRepoOp = do
         "action" -> (\v -> e { ropAction = parseAction v }) <$> D.decodeString
         "path"   -> (\v -> e { ropPath   = v })             <$> D.decodeString
         "cid"    -> (\v -> e { ropCid    = v })             <$> decodeNullableCidText
+        "prev"   -> (\v -> e { ropPrev   = v })             <$> decodeNullableCidText
         _        -> skipCborValue >> return e
       go (n-1) e'
 

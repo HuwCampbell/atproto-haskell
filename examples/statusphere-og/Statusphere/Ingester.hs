@@ -17,14 +17,12 @@ import           Data.Time.Clock          (getCurrentTime)
 import           Data.Time.Format         (formatTime, defaultTimeLocale)
 import           Database.SQLite.Simple   (Connection)
 
-import qualified ATProto.Lex.Cbor       as Cbor
+import           ATProto.DID              (DidResolver (..), defaultDidResolver)
+import qualified ATProto.Lex.Cbor         as Cbor
 import           ATProto.Car              (readCar, cidToText)
-import           ATProto.Firehose         (FirehoseConfig (..),
-                                           FirehoseClientError (..),
-                                           FirehoseEvent (..),
-                                           CommitEvent (..),
-                                           RepoOp (..), OpAction (..),
-                                           runFirehose)
+
+import           ATProto.Firehose.Client
+import           ATProto.Firehose.Events  (CommitEvent (..), RepoOp (..), OpAction (..))
 
 import           Statusphere.Database     (StatusRow (..), upsertStatus,
                                            deleteStatus)
@@ -39,18 +37,29 @@ statusCollection = "xyz.statusphere.status"
 --
 -- This function blocks forever, automatically reconnecting on errors.
 runIngester :: Connection -> IO ()
-runIngester conn =
-  runFirehose FirehoseConfig
-    { fcRelay   = "bsky.network"
-    , fcCursor  = Nothing
-    , fcOnEvent = handleEvent conn
-    , fcOnError = handleError
-    }
+runIngester conn = do
+  resolver <- defaultDidResolver
+  let
+    fhc =
+      FirehoseConfig
+        { fcRelay   = "bsky.network"
+        , fcCursor  = Nothing
+        , fcOnEvent = \_ -> return ()
+        , fcOnError = handleError
+        }
+    afc =
+      AuthFirehoseConfig {
+        afcBase = fhc
+      , afcResolveDid = \t -> do
+          res <- resolve resolver t
+          pure $ case res of
+            Left x -> Left (show x)
+            Right a -> Right a
+      , afcOnUnverifiable = \_ _ -> return ()
+      , afcOnVerified = mapM_ . handleOp conn
+      }
 
--- | Handle a single firehose event.
-handleEvent :: Connection -> FirehoseEvent -> IO ()
-handleEvent conn (FECommit ce) = mapM_ (handleOp conn ce) (ceOps ce)
-handleEvent _    _             = return ()
+  runAuthFirehose afc
 
 -- | Handle a single record operation.
 handleOp :: Connection -> CommitEvent -> RepoOp -> IO ()

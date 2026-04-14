@@ -34,6 +34,9 @@ data RepoOp = RepoOp
   , ropCid    :: Maybe T.Text
     -- ^ The new CID of the record, as multibase text.
     -- 'Nothing' for deletes.
+  , ropPrev   :: Maybe T.Text
+    -- ^ The new CID of the record, as multibase text.
+    -- 'Nothing' for deletes.
   } deriving (Show)
 
 -- | A @#commit@ event: a new commit to a repository.

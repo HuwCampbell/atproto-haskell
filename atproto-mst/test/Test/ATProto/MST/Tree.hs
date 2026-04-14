@@ -134,8 +134,7 @@ prop_verifyProofsOk = property $ do
           failure
         Right mst -> do
           let op = RecordOp
-                { ropCollection = "com.example.record"
-                , ropRkey       = "3jqfcqzm3fn2j"
+                { ropKey        = "com.example.record/3jqfcqzm3fn2j"
                 , ropCid        = Just parsedLeafCid
                 }
           case verifyProofs mst [op] of
@@ -159,8 +158,7 @@ prop_verifyProofsBadCid = property $ do
         Right mst -> do
           let wrongCid = root
               op = RecordOp
-                    { ropCollection = "com.example.record"
-                    , ropRkey       = "3jqfcqzm3fn2j"
+                    { ropKey        = "com.example.record/3jqfcqzm3fn2j"
                     , ropCid        = Just wrongCid
                     }
           case verifyProofs mst [op] of
