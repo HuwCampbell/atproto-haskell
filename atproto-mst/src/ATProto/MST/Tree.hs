@@ -1,13 +1,18 @@
--- | Primary in-memory MST data structure.
+-- | Primary Merkle Search Tree data structure.
 --
 -- This module provides the core @MST@ type together with pure operations
 -- for construction, traversal, lookup, diff, and proof verification.
--- The @BlockMap@ type is demoted to a serialisation format: use
+--
+-- The @BlockMap@ type is the serialisation format for MST trees, one can
 -- 'fromBlockMap' / 'toBlockMap' to move between the two representations.
 --
--- Desired layering:
+-- The biggest caveat for this module is that the parsing of tht MST is
+-- strict and complete, so it can't work with partial modifications off of
+-- the firehose.
 --
--- > [BlockMap / CAR file] <-> fromBlockMap / toBlockMap <-> [MST] <- lookup / toList / diff
+-- The @BlockMap@ structure can store Merkle Search Tree nodes well as
+-- actual record contents (think bluesky posts). The MST itself doesn't\
+-- store any "real" data, just pointers to it based on the content hash.
 module ATProto.MST.Tree
   ( -- * Types
     MST (..)
@@ -150,7 +155,7 @@ toBlockMap mst = go mst Map.empty
   where
     go :: MST -> BlockMap -> BlockMap
     go (MST cid entries) acc =
-      let acc'  = foldl processEntry acc entries
+      let acc'  = foldl' processEntry acc entries
           nd    = toNodeData entries
           bytes = encodeNode nd
       in Map.insert cid bytes acc'
