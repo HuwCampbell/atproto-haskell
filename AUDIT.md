@@ -1,7 +1,7 @@
 API Alignment Audit
 ===================
 
-Last updated: 2026-03-20.
+Last updated: 2026-04-16.
 
 This document describes the current state of each package in
 atproto-haskell and how closely its public API aligns with the
@@ -47,13 +47,18 @@ verifyDidSig in the reference.
 The did:key encoding and decoding (pubKeyToDidKey / didKeyToPubKey)
 uses the correct multicodec varint prefixes: 0x1200 for P-256 and
 0xe701 for secp256k1.  Base58btc encoding is implemented in pure
-Haskell with no additional dependencies.
+Haskell with no additional dependencies.  The Multikey module provides
+encodeMultikey and decodeMultikey for multibase-encoded public keys
+used in DID documents.
 
 The reference package also exports utility functions for importing raw
 private keys and for parsing compact signatures.  importPrivKey is
 present; compact signature parsing is handled implicitly within
-verify.  The reference package's exportPrivKey / exportPublicKey
-functions are not yet implemented.
+verify.  The reference TypeScript package's ExportableKeypair interface
+exposes an export() method that returns the raw private key bytes; the
+Haskell package does not expose a corresponding exportPrivKey function,
+though the private key bytes are accessible through the PrivKey type's
+internal field.
 
 Test coverage includes round-trip did:key tests and signing/
 verification tests for both curves.  The reference package includes
@@ -70,9 +75,23 @@ directly to the DID Core specification fields parsed by the reference
 resolver.  FromJSON instances are hand-written using aeson 2.x without
 Template Haskell.
 
-Two resolvers are implemented: PlcResolver (did:plc via the PLC
-directory at plc.directory) and WebResolver (did:web via the
-.well-known/did.json endpoint).  Both match the reference behaviour,
+Four resolvers are implemented:
+
+  - PlcResolver: did:plc via the PLC directory at plc.directory.
+  - WebResolver: did:web via the .well-known/did.json endpoint.
+  - DispatchResolver: auto-dispatches to PlcResolver or WebResolver
+    based on the DID method prefix, created via newDispatchResolver
+    or defaultDispatchResolver.
+  - CachingResolver: a transparent caching wrapper around any
+    DidResolver with a configurable TTL (default 1 hour).
+    newCachingResolver accepts a custom TimeSpec;
+    defaultCachingResolver uses 3600 seconds.
+    refreshResolve bypasses the cache for force-refresh scenarios.
+
+defaultDidResolver chains all four layers (PLC + Web -> Dispatch ->
+Caching) into a single ready-to-use resolver.
+
+Both PlcResolver and WebResolver match the reference behaviour,
 including the AT Protocol restriction that did:web identifiers
 containing path components are rejected.
 
@@ -109,8 +128,26 @@ contains the original handle).  This cross-validation step is not yet
 implemented in Haskell.
 
 
-atproto-haskell-lexicon  (@atproto/lexicon)
---------------------------------------------
+atproto-haskell-ipld  (IPLD value types)
+------------------------------------------
+
+The package provides the intermediate representation for AT Protocol
+record data, bridging between DAG-JSON (Aeson) and DAG-CBOR (cborg)
+serialisation formats.
+
+The central type is LexValue, with constructors for null, bool, int
+(Int64, no floats per spec), string, bytes, CID link, blob reference,
+array, and object.  The Cid newtype wraps a Text-encoded CID string.
+BlobRef carries a CID, MIME type, and size.
+
+DAG-JSON encoding and decoding (ATProto.Ipld.Json) handles the special
+$link, $bytes, and $type conventions.  DAG-CBOR encoding and decoding
+(ATProto.Ipld.Cbor) handles CBOR tag-42 for CID links and produces
+canonical shortest-form output.
+
+
+atproto-haskell-lexicon  (@atproto/lexicon -- types)
+-----------------------------------------------------
 
 The Haskell package provides data types for the full Lexicon schema
 language: all primitive types, IPLD types, references, blobs, arrays,
@@ -127,9 +164,41 @@ The reference @atproto/lexicon package also provides:
   - ToJSON instances for round-tripping
   - structural merging of lexicon documents
 
-None of these are implemented in atproto-haskell-lexicon.  The current
-package handles only parsing of schema documents, not validation of
-record values against those schemas.
+ToJSON instances and structural merging are not implemented in
+atproto-haskell-lexicon.  Schema validation is provided by the
+companion package atproto-haskell-lex (see below).
+
+
+atproto-haskell-lex  (@atproto/lexicon -- codecs and validation)
+-----------------------------------------------------------------
+
+This package provides profunctor-style codec combinators for the
+AT Protocol Lexicon type system, bridging typed Haskell values to JSON
+and CBOR serialisation.
+
+A Codec carries three things: a structural LexSchema, a decoder, and
+a writer.  The codec DSL covers all AT Protocol primitives (null, bool,
+int, text, string, bytes, cid, blob, datetime, atUri, did, handle,
+uri), composites (array, nullable, fallback), structured records via
+the StructBuilder/StructCodec pattern (record, requiredField,
+optionalField, fallbackField), and tagged unions (union through
+union5).
+
+ATProto.Lex.Json and ATProto.Lex.Cbor provide bridge modules for
+encoding and decoding through Aeson and cborg respectively.
+
+ATProto.Lex.Validate implements structural schema validation:
+validate :: LexiconDoc -> Text -> LexSchema -> [ValidationError]
+checks that a codec's embedded schema agrees with a parsed lexicon
+document.  Validation errors include FieldMissing, FieldExtra,
+TypeMismatch, RequiredMismatch, and DefinitionNotFound.
+
+This validation checks schema structure (codec against lexicon
+specification), which is the compile-time guarantee that a codec
+correctly describes a lexicon.  The reference @atproto/lexicon
+package's runtime validation (assertValidRecord, assertValidXrpcParams,
+etc.) checks arbitrary JSON values against a schema at runtime; this
+runtime value-level validation is not yet implemented.
 
 
 atproto-haskell-xrpc  (@atproto/xrpc)
@@ -172,10 +241,11 @@ endpoints, the server-side counterpart to atproto-haskell-xrpc and
 atproto-haskell-xrpc-http.
 
 Handlers are parametric in the application monad m (constrained to
-MonadIO).  This lets users write handlers in ReaderT AppEnv IO or any
-other MonadIO stack and supply a runner once at the WAI boundary, rather
-than threading environment values through every handler.  The pattern is
-analogous to hoistServer in Servant.
+MonadIO) and in the caller identity type did.  This lets users write
+handlers in ReaderT AppEnv IO or any other MonadIO stack and supply a
+runner once at the WAI boundary, rather than threading environment
+values through every handler.  The pattern is analogous to hoistServer
+in Servant.
 
 The XrpcServer routing table is keyed by (XrpcMethod, NSID) and built
 with makeServer from a list of XrpcEndpoint values registered via the
@@ -188,14 +258,15 @@ wraps the middleware into a standalone Application that returns 404 for
 non-XRPC paths.
 
 HTTP routing rules match the reference:
-  - Invalid NSID in path          → 400 InvalidNSID
-  - Valid NSID, wrong HTTP method  → 405 MethodNotAllowed
-  - Valid NSID, no handler         → 501 MethodNotImplemented
-  - Successful handler result      → 200 with JSON body
-  - XrpcAccepted                   → 202, no body
-  - XrpcHandlerError               → 400 with {error, message} body
+  - Invalid NSID in path          -> 400 InvalidNSID
+  - Valid NSID, wrong HTTP method  -> 405 MethodNotAllowed
+  - Valid NSID, no handler         -> 501 MethodNotImplemented
+  - Successful handler result      -> 200 with JSON body
+  - XrpcAccepted                   -> 202, no body
+  - XrpcBadRequest                 -> 400 with {error, message} body
+  - XrpcUnauthorised               -> 401 with {error, message} body
 
-Error responses are serialised as {\"error\":\"...\",\"message\":\"...\"}
+Error responses are serialised as {"error":"...","message":"..."}
 with Content-Type: application/json without an aeson dependency.
 
 An AuthVerifier hook is provided for authentication.  Attach any
@@ -205,98 +276,129 @@ On success the caller's DID is available as xsrCaller in the request.
 Built-in auth schemes supported out of the box (by composing with other
 packages):
   - Service-to-service JWTs via ATProto.ServiceAuth.verifyServiceJwt
-  - OAuth DPoP bearer tokens via ATProto.OAuth.Client
+  - OAuth DPoP bearer tokens via ATProto.OAuth.Provider.Verifier
   - Any custom Basic / API-key scheme
-
-Lexicon-typed input validation (checking that request parameters and
-bodies conform to a schema) is not implemented here; it is deferred to
-a higher-level package once atproto-haskell-lexicon gains a
-schema-validation layer.
 
 
 atproto-haskell-repo  (portions of @atproto/api)
 --------------------------------------------------
 
-The package provides typed bindings for the core com.atproto.repo.*
-and related XRPC methods.  ListRecordsParams covers all five query
-parameters from the Lexicon (repo, collection, limit, cursor, reverse).
-PutRecordRequest covers the repo, collection, rkey, and record fields
-together with an optional validate flag; PutRecordResponse returns the
-URI, CID, and CommitMeta from the resulting commit.  DeleteRecordRequest
-and DeleteRecordResponse follow the same pattern.  UploadBlobRequest
-accepts a MIME type and raw bytes; UploadBlobResponse returns the blob
-CID.  GetBlobParams fetches raw blob bytes by DID and CID.  GetProfile
-wraps app.bsky.actor.getProfile and returns a ProfileView.  All
-functions accept any XrpcClient backend.
+The package provides typed XRPC bindings organised by namespace,
+covering the core com.atproto.* methods and select app.bsky.* types.
+Each binding module follows a consistent pattern: request/params types,
+response types, codec definitions (using atproto-haskell-lex), and a
+client function taking any XrpcClient backend.
 
-No bindings exist for com.atproto.repo.createRecord,
-com.atproto.repo.getRecord, or com.atproto.repo.describeRepo.  These
-are straightforward additions following the same pattern.
+com.atproto.repo.* bindings (11 modules):
+
+  - ListRecords: ListRecordsParams covers all five query parameters
+    (repo, collection, limit, cursor, reverse).
+  - PutRecord: PutRecordRequest covers repo, collection, rkey, record,
+    and optional validate flag; PutRecordResponse returns URI, CID, and
+    CommitMeta.
+  - DeleteRecord: DeleteRecordRequest and DeleteRecordResponse.
+  - CreateRecord: CreateRecordRequest (repo, collection, optional rkey,
+    record, optional validate) and CreateRecordResponse (URI, CID,
+    commit).
+  - GetRecord: GetRecordParams (repo, collection, rkey, optional CID)
+    and GetRecordResponse (URI, CID, value).
+  - DescribeRepo: DescribeRepoParams and DescribeRepoResponse (handle,
+    DID, DID document, collections, handleIsCorrect).
+  - ApplyWrites: atomic batch write operations.
+  - CommitMeta: shared commit metadata type.
+  - UploadBlob / GetBlob: blob upload and retrieval.
+  - GetProfile: app.bsky.actor.getProfile wrapper.
+  - ListMissingBlobs: list blobs referenced but not stored.
+
+com.atproto.server.* bindings (8 modules):
+
+  - CreateAccount, CreateSession, RefreshSession, DeleteSession,
+    GetSession, DescribeServer, GetServiceAuth, CheckAccountStatus.
+  - Defs: shared server definition types.
+
+com.atproto.identity.* bindings (5 modules):
+
+  - ResolveHandle, ResolveDid, ResolveIdentity, UpdateHandle.
+  - Defs: shared identity definition types.
+
+com.atproto.sync.* bindings (8 modules):
+
+  - GetBlob, GetLatestCommit, GetRepo, GetRepoStatus, ListBlobs,
+    ListRepos, NotifyOfUpdate, RequestCrawl.
+
+com.atproto.label.* (1 module):
+
+  - Defs: label definition types.
+
+app.bsky.* (2 modules):
+
+  - Feed.Post: post record type.
+  - Feed.GetFeedSkeleton: feed generator skeleton.
 
 
-Summary of gaps
----------------
+atproto-haskell-car  (@atproto/repo -- CAR)
+--------------------------------------------
 
-The following items from the reference packages are not yet implemented:
+CAR v1 (Content Addressable aRchive) reading and writing are fully
+implemented.
 
-- Cross-validation of resolved handles against DID document alsoKnownAs
-- Configurable DNS timeout in HandleResolver
-- exportPrivKey / exportPublicKey in atproto-haskell-crypto
-- Test vectors from the AT Protocol specification in crypto tests
-- Lexicon schema validation (checking record values against schemas)
-- ToJSON instances for Lexicon types
-- com.atproto.repo.createRecord, com.atproto.repo.getRecord,
-  com.atproto.repo.describeRepo XRPC bindings
+Reading: the parser covers the varint-length-prefixed header (DAG-CBOR
+map with version and roots fields), CBOR tag-42 CID encoding/decoding,
+and the block sequence.  Binary CIDv1 parsing dynamically determines
+CID length by reading version, codec, and multihash header varints.
+Display uses multibase base32lower (prefix 'b'), compatible with the
+existing string-based ATProto.Ipld.Value.Cid type.  readCar handles
+zero or more roots; readCarWithRoot enforces exactly one root.
 
+Writing: writeCar encodes a list of root CIDs and a BlockMap into a
+valid CAR v1 byte string.  writeCarWithRoot is the single-root
+convenience wrapper.  Blocks are written in ascending CID order with
+varint-encoded length prefixes.
 
-atproto-haskell-car  (@atproto/repo — CAR parsing)
-----------------------------------------------------
+The BlockMap type (Map CidBytes ByteString) is the central data
+structure shared between CAR, MST, and PDS packages.
 
-CAR v1 (Content Addressable aRchive) parsing is fully implemented.
-The parser covers the varint-length-prefixed header (DAG-CBOR map with
-version and roots fields), CBOR tag-42 CID encoding/decoding, and the
-block sequence.  Binary CIDv1 parsing dynamically determines CID length
-by reading version, codec, and multihash header varints.  Display uses
-multibase base32lower (prefix 'b'), compatible with the existing
-string-based ATProto.Ipld.Value.Cid type.
-
-readCar handles zero or more roots; readCarWithRoot enforces exactly
-one root.  The BlockMap type (Map CidBytes ByteString) is the central
-data structure consumed by atproto-haskell-mst.
+Shared DAG-CBOR helpers in ATProto.Car.DagCbor (encodeCidTag42,
+decodeCidTag42, encodeNullableCidTag42, decodeNullableCidTag42,
+skipValue) are used by atproto-mst, atproto-pds, and
+atproto-repo-verify for canonical CBOR encoding.  cidForDagCbor
+computes the CIDv1 (SHA-256, DAG-CBOR codec) for a byte string.
 
 Gap: no CAR v2 support (the reference repo package supports both).
 
 
-atproto-haskell-mst  (@atproto/repo — MST)
+atproto-haskell-mst  (@atproto/repo -- MST)
 -------------------------------------------
 
-Merkle Search Tree operations are fully implemented:
+Merkle Search Tree operations are fully implemented, including both
+reading and writing:
 
   - Node decoding: NodeData and TreeEntry from DAG-CBOR, including
     nullable tag-42 CID fields for left subtrees and right subtrees.
+  - Node encoding: encodeNode serialises an MST node to canonical
+    DAG-CBOR for CID computation and block storage.
   - Layer computation: leadingZerosOnHash counts leading 2-bit zero
     pairs in the SHA-256 digest, matching the reference exactly.
     Test vectors from the TypeScript suite are verified.
-  - Point lookup: get performs a correct flat-entry interleaved walk
-    (leftmost subtree, leaf, right subtree for each entry) and
-    descends into subtrees as needed.
-  - Tree diff: mstDiff collects all leaves from both trees in sorted
-    order and computes WCreate/WUpdate/WDelete descriptors.  Equal
-    subtree CIDs are short-circuited (subtrees not re-walked).
+  - MST construction: singleton creates a single-entry tree;
+    fromList and fromNonEmpty batch-construct from sorted key-value
+    pairs; insert adds or updates a single key in an existing tree,
+    handling layer-based spine node creation and subtree splitting.
+  - Point lookup: lookup and member for key queries; toList for full
+    leaf enumeration; rootCid for the tree root CID.
+  - Serialisation: toBlockMap serialises the entire tree to a BlockMap
+    suitable for CAR encoding and block storage.
+  - Tree diff: diff computes WCreate/WUpdate/WDelete descriptors
+    between two trees.  Equal subtree CIDs are short-circuited.
   - Proof verification: verifyProofs checks each RecordOp against the
     live MST, comparing found CIDs with claimed CIDs.
 
-Gap: the diff implementation walks full leaf lists rather than doing
-a true simultaneous walk with CID-equality subtree pruning at the
-node level.  For large trees with small diffs this is less efficient
-than the reference, but produces correct results.
-
-Gap: test coverage uses single-node trees only.  The 11-key known-
-root-CID test vectors from the TypeScript mst.test.ts are not yet
-verified against hand-crafted fixtures.
+The write path (insert, fromList, toBlockMap) corresponds to the Repo
+class in the TypeScript @atproto/repo package, completing the
+read/write coverage needed by the PDS.
 
 
-atproto-haskell-repo-verify  (@atproto/repo — commit verification)
+atproto-haskell-repo-verify  (@atproto/repo -- commit verification)
 -------------------------------------------------------------------
 
 Full commit verification pipeline:
@@ -309,7 +411,7 @@ Full commit verification pipeline:
   - verifyCommitSig: re-encodes the unsigned commit in canonical
     DAG-CBOR field order (did, rev, data, prev, version) and calls
     ATProto.Crypto.EC.verify Strict.
-  - verifyCommitCar: full pipeline — parse CAR, decode commit, assert
+  - verifyCommitCar: full pipeline -- parse CAR, decode commit, assert
     DID, extract key, verify sig, verify MST proofs, return diff.
 
 Gap: encodeUnsignedCommit always includes the prev field (as CBOR
@@ -322,7 +424,7 @@ firehose client calls afcResolveDid twice on key-rotation failures;
 callers must implement caching to avoid excessive network requests.
 
 
-atproto-haskell-firehose  (@atproto/sync — Firehose)
+atproto-haskell-firehose  (@atproto/sync -- Firehose)
 ------------------------------------------------------
 
 WebSocket firehose client with event decoding and optional commit
@@ -430,12 +532,105 @@ token refresh on every request.
 
 The reference packages covered are @atproto/oauth-client,
 @atproto/oauth-client-node, @atproto/oauth-types, @atproto/jwk, and
-@atproto/oauth-scopes.  The Haskell package does not implement an OAuth
-provider / authorisation server (upstream: @atproto/oauth-provider);
-that role is played by the PDS, not by client applications.
+@atproto/oauth-scopes.
 
 
-atproto-haskell-tap  (Trusted Application Pass — @atproto/tap)
+atproto-haskell-oauth-provider  (@atproto/oauth-provider -- server side)
+------------------------------------------------------------------------
+
+The package implements server-side OAuth 2.1 token verification and
+DPoP proof validation, covering the core security operations that a
+PDS or resource server needs to authenticate incoming requests.
+
+DPoP nonce management (ATProto.OAuth.Provider.DPoP.Nonce) implements
+HMAC-based rotating nonces.  newNonceState initialises mutable state
+with a secret and rotation interval; nextNonce produces the current
+valid nonce; checkNonce validates a presented nonce against the
+current and previous rotation windows.
+
+DPoP proof verification (ATProto.OAuth.Provider.DPoP.Verifier)
+implements RFC 9449 server-side validation: JWS signature verification,
+EC key extraction, htm/htu binding checks, nonce validation, ath
+(access token hash) claim validation, and iat recency checking.
+
+Access token management (ATProto.OAuth.Provider.Token) implements
+RFC 9068 at+jwt tokens: createAccessToken issues a signed JWT with
+the standard claims (iss, sub, aud, jti, scope, client_id, iat, exp,
+cnf.jkt); verifyAccessToken decodes and validates tokens.  Signing
+keys are EC P-256.
+
+Request authentication (ATProto.OAuth.Provider.Verifier) ties the
+above together: authenticateRequest parses the Authorization header,
+verifies the DPoP proof, verifies the access token, and checks the
+DPoP binding (cnf.jkt matches the proof key).
+
+The reference @atproto/oauth-provider package is considerably larger,
+encompassing the full authorisation server with consent UI, client
+registration, authorisation code grants, and session management.  The
+Haskell package covers only the token-verification and DPoP subsystems
+needed to protect resource-server endpoints.
+
+Gap: authorisation code grant flow (issuing codes, exchanging them for
+tokens) is not implemented.  A PDS acting as a full authorisation
+server would need to add these flows.
+
+Gap: client registration and metadata validation are not implemented.
+
+
+atproto-haskell-pds  (AT Protocol Personal Data Server core)
+--------------------------------------------------------------
+
+The package provides the core library for building a Personal Data
+Server, including type-class-based storage abstractions, repository
+management, and commit signing.
+
+Storage is abstracted behind two type classes:
+
+  - BlockStore: content-addressed block storage (CID -> bytes), with
+    getBlock and putBlock.
+  - RepoStore: repository metadata (DID -> head commit CID), with
+    getRepoHead and setRepoHead.
+
+Two concrete backends are provided:
+
+  - InMemoryStore: IORef-wrapped Maps, suitable for tests and
+    short-lived processes.
+  - FileStore: filesystem backend storing blocks and heads as
+    individual files in subdirectories.
+
+Commit signing (ATProto.PDS.Commit) produces v3 signed commits in
+canonical DAG-CBOR field order (did, rev, sig, data, prev, version).
+createSignedCommit accepts a DID, private key, MST root CID, previous
+commit CID, and revision TID, returning the signed commit bytes and
+CID.
+
+Repository operations (ATProto.PDS.Repo) build on BlockStore,
+RepoStore, MST, and commit signing:
+
+  - initRepo: creates an empty repository with a signed initial commit.
+  - createRecord: inserts a new record, produces a new commit.
+  - getRecord: retrieves a record by collection and record key.
+  - listRecords: lists all records in a collection.
+  - deleteRecord: removes a record, produces a new commit.
+  - applyWrites: atomic batch of Create/Update/Delete operations in
+    a single commit.
+  - exportRepoCar: exports the full repository state as CAR v1 bytes.
+  - importRepoCar: imports CAR v1 bytes into block storage and sets
+    the repository head.
+
+The PdsError type covers all failure modes (repo not found, already
+exists, block not found, MST error, commit decode error, record
+exists, record not found).
+
+Gap: no BlobStore, PreferenceStore, or AccountStore type classes.
+Blob management, user preferences, and account data are not yet
+abstracted.
+
+Gap: no sequencer (outbound firehose producer).  Commits are stored
+but not broadcast to WebSocket subscribers.
+
+
+atproto-haskell-tap  (Trusted Application Pass -- @atproto/tap)
 ---------------------------------------------------------------
 
 TAP is the notification push mechanism used by ATProto applications to
@@ -475,7 +670,7 @@ Gap: the client streams all events for tracked repositories without
 server-side filtering by collection or action type.
 
 
-Personal Data Server — Readiness Analysis
+Personal Data Server -- Readiness Analysis
 -----------------------------------------
 
 A Personal Data Server (PDS) is the home server for an ATProto user.
@@ -492,48 +687,25 @@ and assesses readiness.
 
 | Upstream subsystem | Haskell equivalent | Status |
 |---|---|---|
-| account-manager/ — account DB, email verification, sessions | None | Missing |
-| actor-store/ — per-actor repo storage | None | Missing |
-| api/ — XRPC handlers for com.atproto.* | atproto-repo covers listRecords, putRecord, deleteRecord, uploadBlob, getBlob; createRecord, getRecord, describeRepo absent | Partial |
-| auth-verifier.ts — JWT/OAuth token verification | atproto-service-auth (service-to-service); atproto-oauth (client-side); atproto-xrpc-server AuthVerifier hook wires them to XRPC handlers | Partial (no server-side OAuth provider) |
-| auth-routes.ts / auth-scope.ts — OAuth provider routes | None | Missing |
-| sequencer/ — outbound event sequencer (firehose emitter) | atproto-firehose covers the consumer side | Missing (producer side) |
-| did-cache/ — persisted DID document cache | CachingResolver | Present |
-| disk-blobstore.ts / aws — blob storage | None | Missing |
-| mailer/ — email for verification and password reset | None | Missing (out of scope for library) |
-| handle/ — handle resolution and validation | atproto-identity + atproto-syntax | Present |
-| config/ — server configuration | None | Missing (application concern) |
-| repo/ (PDS-internal) — repo mutation (create/update/delete) | atproto-mst and atproto-repo-verify cover read and verify; write path absent | Missing (MST write path) |
-| well-known.ts — .well-known/atproto-did and did.json serving | None | Missing (trivial, application concern) |
-| crawlers.ts — notifying relays of new commits | None | Missing |
-| pipethrough.ts — proxying unimplemented queries to AppView | atproto-xrpc-http | Possible |
+| account-manager/ -- account DB, email verification, sessions | None | Missing |
+| actor-store/ -- per-actor repo storage | atproto-pds BlockStore + RepoStore type classes with InMemory and FileSystem backends | Present (basic) |
+| api/ -- XRPC handlers for com.atproto.* | atproto-repo covers repo.* (createRecord, getRecord, listRecords, putRecord, deleteRecord, describeRepo, applyWrites, uploadBlob, getBlob, listMissingBlobs), server.* (createAccount, createSession, refreshSession, deleteSession, getSession, describeServer, getServiceAuth, checkAccountStatus), identity.* (resolveHandle, resolveDid, resolveIdentity, updateHandle), sync.* (getBlob, getLatestCommit, getRepo, getRepoStatus, listBlobs, listRepos, notifyOfUpdate, requestCrawl), label.defs | Present (typed bindings for all core methods) |
+| auth-verifier.ts -- JWT/OAuth token verification | atproto-service-auth (service-to-service JWTs); atproto-oauth-provider (DPoP proof verification, at+jwt token verification, request authentication); atproto-xrpc-server AuthVerifier hook wires them to XRPC handlers | Present |
+| auth-routes.ts / auth-scope.ts -- OAuth provider routes | atproto-oauth-provider covers token verification and DPoP; authorisation code grant flow absent | Partial |
+| sequencer/ -- outbound event sequencer (firehose emitter) | atproto-firehose covers the consumer side | Missing (producer side) |
+| did-cache/ -- persisted DID document cache | CachingResolver in atproto-did | Present |
+| disk-blobstore.ts / aws -- blob storage | None | Missing |
+| mailer/ -- email for verification and password reset | None | Missing (out of scope for library) |
+| handle/ -- handle resolution and validation | atproto-identity + atproto-syntax | Present |
+| config/ -- server configuration | None | Missing (application concern) |
+| repo/ (PDS-internal) -- repo mutation (create/update/delete) | atproto-pds (initRepo, createRecord, getRecord, listRecords, deleteRecord, applyWrites) using atproto-mst (insert, fromList, toBlockMap) for MST mutations and atproto-pds Commit for v3 signing | Present |
+| well-known.ts -- .well-known/atproto-did and did.json serving | None | Missing (trivial, application concern) |
+| crawlers.ts -- notifying relays of new commits | None | Missing |
+| pipethrough.ts -- proxying unimplemented queries to AppView | atproto-xrpc-http | Possible |
 | XRPC server framework | atproto-xrpc-server: WAI Middleware routing NSID paths, serialising errors, parametric handler monad | Present |
 
-The most significant missing pieces for a PDS implementation are as
+The most significant remaining gaps for a PDS implementation are as
 follows.
-
-XRPC server framework.  atproto-haskell-xrpc-server provides a WAI
-Middleware for routing /xrpc/<nsid> paths to MonadIO handlers with
-correct error serialisation and an AuthVerifier hook.  Applications
-wire in verifyServiceJwt (service-to-service) or an OAuth token
-verifier via withAuthVerifier; the middleware enforces it before every
-handler call and injects the caller DID into xsrCaller.  Lexicon-typed
-input validation is deferred to a higher-level package once
-atproto-haskell-lexicon gains a schema-validation layer.
-
-MST write path.  The atproto-mst package supports reads, leaf
-enumeration, diffs, and proof verification, but does not support
-creating or mutating MST nodes.  A PDS must construct a new MST state
-on every record write, sign the resulting commit, and emit the signed
-commit to the sequencer.  This corresponds to the Repo class in the
-TypeScript @atproto/repo package (as opposed to the ReadableRepo class).
-The write path would need to be added to atproto-mst or a new package.
-
-OAuth provider.  The atproto-oauth package implements the OAuth 2.1
-client profile.  A PDS is an OAuth authorisation server: it issues
-authorisation codes, exchanges them for DPoP-bound access tokens, and
-handles token refresh.  This corresponds to the TypeScript
-@atproto/oauth-provider package, which has no Haskell equivalent.
 
 Account and session management.  There is no database layer for storing
 accounts, password hashes, email verification tokens, or login sessions.
@@ -553,24 +725,42 @@ with a monotonically increasing sequence number, and broadcast it to
 connected WebSocket subscribers.  This is the sequencer/ subsystem in
 the reference implementation.
 
+OAuth authorisation code grant.  The atproto-oauth-provider package
+handles token verification and DPoP but does not implement the
+authorisation code grant flow (issuing codes, consent UI integration,
+code-for-token exchange).  A full PDS authorisation server requires
+these additional flows.
+
 What is already present and useful for a PDS implementation:
+
+The atproto-pds package provides the core repository operations
+(initRepo, createRecord, getRecord, listRecords, deleteRecord,
+applyWrites) with pluggable storage backends and v3 commit signing.
+CAR export and import round-trip correctly.
+
+The atproto-mst package now covers both reading and writing: insert,
+fromList, toBlockMap, diff, and verifyProofs form the complete MST
+layer needed by the PDS.
 
 All cryptographic primitives in atproto-haskell-crypto cover key
 generation, signing, and verification for both P-256 and secp256k1,
 which are required for signing commits and verifying service JWTs.
 
-MST reading and verification in atproto-mst, atproto-repo-verify, and
-atproto-car can verify incoming commits from other servers, which is
-useful for the relay and indexer roles and for validating data during
-a PDS migration import.
+The atproto-repo package provides typed XRPC bindings for all core
+com.atproto.* methods (repo, server, identity, sync, label
+namespaces), giving a PDS implementation ready-made request/response
+types and codec definitions.
 
-DID resolution in atproto-did and atproto-identity provides the
-infrastructure needed to verify user keys and resolve handles, which
-a PDS uses when accepting OAuth authorisation requests and validating
-inter-service calls.
+DID resolution in atproto-did (with caching) and handle resolution in
+atproto-identity provide the infrastructure needed to verify user keys
+and resolve handles.
 
 Service auth in atproto-service-auth is ready for the PDS-to-AppView
 and PDS-to-Ozone inter-service call pattern.
+
+The XRPC server framework (atproto-xrpc-server) provides WAI
+Middleware with parametric handler monad, authentication hooks, and
+correct error serialisation.
 
 The XRPC client stack (atproto-xrpc, atproto-xrpc-http) can proxy
 unhandled queries to an AppView (the pipethrough pattern) and covers
@@ -583,3 +773,21 @@ The atproto-firehose consumer and atproto-tap packages are more useful
 for relay, indexer, and application roles than for the PDS itself, but
 they share infrastructure (CAR parsing, MST verification, DID
 resolution) with the PDS subsystems listed above.
+
+
+Summary of remaining gaps
+--------------------------
+
+The following items from the reference packages are not yet implemented:
+
+- Cross-validation of resolved handles against DID document alsoKnownAs
+- Configurable DNS timeout in HandleResolver
+- exportPrivKey / exportPublicKey in atproto-haskell-crypto
+- Test vectors from the AT Protocol specification in crypto tests
+- ToJSON instances for Lexicon schema types (atproto-haskell-lexicon)
+- Runtime value-level validation of JSON values against Lexicon schemas
+- Account and session management database layer
+- Blob store abstraction and implementations
+- Sequencer (outbound firehose producer)
+- OAuth authorisation code grant flow (server-side)
+- CAR v2 support
