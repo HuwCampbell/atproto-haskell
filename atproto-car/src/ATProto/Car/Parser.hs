@@ -24,9 +24,10 @@ import qualified Codec.CBOR.Decoding  as D
 import qualified Codec.CBOR.Read      as R
 import qualified Data.ByteString.Lazy as BL
 
-import           ATProto.Car.Cid      (CidBytes (..), parseCidFromBytes)
+import           ATProto.Car.Cid      (CidBytes (..), parseCidFromBytes, cidForDagCbor)
 import           ATProto.Car.BlockMap (BlockMap)
 import           ATProto.Car.DagCbor  (decodeCidTag42)
+import Control.Monad (unless)
 
 -- ---------------------------------------------------------------------------
 -- Error type
@@ -124,6 +125,15 @@ parseBlocks bs off accE
               Left  err       -> Left (CarBadCid (T.pack err))
               Right (c, n)    -> Right (c, n)
           let blockBytes = BS.drop cidLen entry
+              expectedCid = cidForDagCbor blockBytes   -- recompute from content
+
+          --
+          -- Critical security check, if we omit this, then it's possible that
+          -- a malicious actor could sneak in a CAR file into a trusted boundary
+          -- which contains unverified information.
+          unless (cid == expectedCid) $
+            Left (CarBadBlock "CID does not match block content")
+
           parseBlocks bs (off1 + entryLen) (Right (Map.insert cid blockBytes acc))
 
 -- ---------------------------------------------------------------------------
