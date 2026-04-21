@@ -4,22 +4,25 @@
 -- repositories: initialisation, record creation\/retrieval\/listing\/deletion,
 -- and batch writes.
 --
--- All operations are generic over any storage backend that implements
--- 'BlockStore' and 'RepoStore'.
+-- All operations are generic over any storage backend.  They receive an
+-- 'ActorStore' that bundles the target DID with its per-actor storage
+-- handle, which implements both 'BlockStore' and 'RepoStore'.
 --
 -- @
--- import ATProto.PDS.Storage.InMemory (newInMemoryStore)
+-- import ATProto.PDS.Storage.InMemory (newInMemoryBackend)
+-- import ATProto.PDS.ActorStore       (openActorStore)
 -- import ATProto.PDS.Repo
 -- import ATProto.Crypto (generateKeyPair, Curve(..))
 -- import ATProto.Syntax  (parseDID)
 --
 -- main :: IO ()
 -- main = do
---   store <- newInMemoryStore
+--   backend <- newInMemoryBackend
 --   (priv, _pub) <- generateKeyPair P256
 --   let Right did = parseDID \"did:plc:example\"
---   Right _commit <- initRepo store did priv
---   Right _commit <- createRecord store did priv
+--   store <- openActorStore backend did
+--   Right _commit <- initRepo store priv
+--   Right _commit <- createRecord store priv
 --                      \"app.bsky.feed.post\" \"3jqfcqzm3fn2j\"
 --                      \"{\\\"text\\\": \\\"hello\\\"}\"
 -- @
@@ -62,9 +65,10 @@ import ATProto.MST.Get       (get)
 import ATProto.MST.Node      (NodeData (..), TreeEntry (..), decodeNode)
 import ATProto.MST.Types     (MstError (..))
 import ATProto.Crypto.Types  (PrivKey)
-import ATProto.Syntax.DID    (DID, unDID)
+import ATProto.Syntax.DID    (unDID)
 import ATProto.Syntax.TID    (tidNow, unTID)
 import ATProto.PDS.Storage   (BlockStore (..), RepoStore (..))
+import ATProto.PDS.ActorStore (ActorStore (..))
 import ATProto.PDS.Commit    (createSignedCommit)
 
 -- ---------------------------------------------------------------------------
@@ -93,18 +97,20 @@ data PdsError
 -- Repository initialisation
 -- ---------------------------------------------------------------------------
 
--- | Initialise a new, empty repository for the given DID.
+-- | Initialise a new, empty repository for the actor in 'ActorStore'.
 --
 -- Creates an empty MST root node and a signed v3 commit, stores all
 -- blocks, and sets the repository head.
 --
 -- Returns the CID of the initial commit, or 'PdsRepoAlreadyExists' if
--- the DID already has a repository.
+-- the actor already has a repository.
 initRepo
   :: (BlockStore s, RepoStore s)
-  => s -> DID -> PrivKey -> IO (Either PdsError CidBytes)
-initRepo store did key = do
-  existing <- getRepoHead store did
+  => ActorStore s -> PrivKey -> IO (Either PdsError CidBytes)
+initRepo store key = do
+  let s   = actorStorage store
+      did = actorDid store
+  existing <- getRepoHead s
   case existing of
     Just _  -> return (Left (PdsRepoAlreadyExists (unDID did)))
     Nothing -> do
@@ -112,15 +118,15 @@ initRepo store did key = do
       let emptyNode  = NodeData Nothing []
           emptyBytes = encodeNode emptyNode
           emptyRoot  = cidForDagCbor emptyBytes
-      putBlock store emptyRoot emptyBytes
+      putBlock s emptyRoot emptyBytes
 
       -- Create the signed commit.
       rev <- unTID <$> tidNow
       (commitCid, commitBytes) <- createSignedCommit (unDID did) key rev Nothing emptyRoot
-      putBlock store commitCid commitBytes
+      putBlock s commitCid commitBytes
 
       -- Set the head.
-      setRepoHead store did commitCid
+      setRepoHead s commitCid
       return (Right commitCid)
 
 -- ---------------------------------------------------------------------------
@@ -135,15 +141,14 @@ initRepo store did key = do
 -- Returns the CID of the new commit.
 createRecord
   :: (BlockStore s, RepoStore s)
-  => s
-  -> DID
+  => ActorStore s
   -> PrivKey
   -> T.Text           -- ^ Collection NSID (e.g. @\"app.bsky.feed.post\"@)
   -> T.Text           -- ^ Record key
   -> BS.ByteString    -- ^ Record body (DAG-CBOR bytes)
   -> IO (Either PdsError CidBytes)
-createRecord store did key collection rkey recordBytes =
-  applyWrites store did key [Create collection rkey recordBytes]
+createRecord store key collection rkey recordBytes =
+  applyWrites store key [Create collection rkey recordBytes]
 
 -- | Retrieve a record from the repository.
 --
@@ -151,13 +156,14 @@ createRecord store did key collection rkey recordBytes =
 -- exist in the collection, or a 'PdsError' on storage/decoding failures.
 getRecord
   :: BlockStore s
-  => s
+  => ActorStore s
   -> CidBytes         -- ^ Commit CID (head of the repo)
   -> T.Text           -- ^ Collection NSID
   -> T.Text           -- ^ Record key
   -> IO (Either PdsError (Maybe BS.ByteString))
 getRecord store commitCid collection rkey = do
-  r <- loadCommitData store commitCid
+  let s = actorStorage store
+  r <- loadCommitData s commitCid
   case r of
     Left err -> return (Left err)
     Right (dataRoot, mstBlocks) -> do
@@ -166,7 +172,7 @@ getRecord store commitCid collection rkey = do
         Left mstErr         -> return (Left (mapMstError mstErr))
         Right Nothing       -> return (Right Nothing)
         Right (Just recCid) -> do
-          mBlock <- getBlock store recCid
+          mBlock <- getBlock s recCid
           case mBlock of
             Nothing -> return (Left (PdsBlockNotFound (T.pack (show recCid))))
             Just bs -> return (Right (Just bs))
@@ -176,12 +182,13 @@ getRecord store commitCid collection rkey = do
 -- Returns @(recordKey, recordBytes)@ pairs sorted by record key.
 listRecords
   :: BlockStore s
-  => s
+  => ActorStore s
   -> CidBytes         -- ^ Commit CID (head of the repo)
   -> T.Text           -- ^ Collection NSID
   -> IO (Either PdsError [(T.Text, BS.ByteString)])
 listRecords store commitCid collection = do
-  r <- loadCommitData store commitCid
+  let s = actorStorage store
+  r <- loadCommitData s commitCid
   case r of
     Left err -> return (Left err)
     Right (dataRoot, mstBlocks) -> do
@@ -194,7 +201,7 @@ listRecords store commitCid collection = do
                          | w <- writes
                          , prefix `T.isPrefixOf` wdKey w
                          ]
-          records <- mapM (loadRecord store) matching
+          records <- mapM (loadRecord s) matching
           return (sequence records)
 
 -- | Delete a record from the repository.
@@ -203,14 +210,13 @@ listRecords store commitCid collection = do
 -- Returns the CID of the new commit.
 deleteRecord
   :: (BlockStore s, RepoStore s)
-  => s
-  -> DID
+  => ActorStore s
   -> PrivKey
   -> T.Text           -- ^ Collection NSID
   -> T.Text           -- ^ Record key
   -> IO (Either PdsError CidBytes)
-deleteRecord store did key collection rkey =
-  applyWrites store did key [Delete collection rkey]
+deleteRecord store key collection rkey =
+  applyWrites store key [Delete collection rkey]
 
 -- ---------------------------------------------------------------------------
 -- Batch writes
@@ -232,14 +238,16 @@ data WriteOp
 -- single new commit is signed.  Returns the CID of the new commit.
 applyWrites
   :: (BlockStore s, RepoStore s)
-  => s -> DID -> PrivKey -> [WriteOp]
+  => ActorStore s -> PrivKey -> [WriteOp]
   -> IO (Either PdsError CidBytes)
-applyWrites store did key ops = do
-  mHead <- getRepoHead store did
+applyWrites store key ops = do
+  let s   = actorStorage store
+      did = actorDid store
+  mHead <- getRepoHead s
   case mHead of
     Nothing -> return (Left (PdsRepoNotFound (unDID did)))
     Just headCid -> do
-      r <- loadCommitData store headCid
+      r <- loadCommitData s headCid
       case r of
         Left err -> return (Left err)
         Right (dataRoot, mstBlocks) -> do
@@ -249,7 +257,7 @@ applyWrites store did key ops = do
                 Right ws -> [ (wdKey w, wdCid w) | w <- ws ]
 
           -- Apply the write operations.
-          result <- applyOps store currentEntries ops
+          result <- applyOps s currentEntries ops
           case result of
             Left err -> return (Left err)
             Right newEntries -> do
@@ -259,21 +267,21 @@ applyWrites store did key ops = do
               -- Handle empty MST case.
               newDataRoot <- case mNewRoot of
                 Just root -> do
-                  root <$ Map.traverseWithKey (putBlock store) newMstBlocks
+                  root <$ Map.traverseWithKey (putBlock s) newMstBlocks
                 Nothing -> do
                   -- Empty MST: create an explicit empty node.
                   let emptyNode  = NodeData Nothing []
                       emptyBytes = encodeNode emptyNode
                       emptyRoot  = cidForDagCbor emptyBytes
-                  putBlock store emptyRoot emptyBytes
+                  putBlock s emptyRoot emptyBytes
                   return emptyRoot
 
               -- Create and store the new commit.
               rev <- unTID <$> tidNow
               (commitCid, commitBytes) <-
                 createSignedCommit (unDID did) key rev (Just headCid) newDataRoot
-              putBlock store commitCid commitBytes
-              setRepoHead store did commitCid
+              putBlock s commitCid commitBytes
+              setRepoHead s commitCid
               return (Right commitCid)
 
 -- ---------------------------------------------------------------------------
@@ -287,7 +295,7 @@ applyOps
   -> [(T.Text, CidBytes)]   -- ^ current entries
   -> [WriteOp]
   -> IO (Either PdsError [(T.Text, CidBytes)])
-applyOps store = go
+applyOps s = go
   where
     go entries [] = return (Right entries)
     go entries (op:rest) =
@@ -298,14 +306,14 @@ applyOps store = go
             Just _  -> return (Left (PdsRecordExists mstKey))
             Nothing -> do
               let recCid = cidForDagCbor recordBytes
-              putBlock store recCid recordBytes
+              putBlock s recCid recordBytes
               go (entries ++ [(mstKey, recCid)]) rest
 
         Update col rk recordBytes -> do
           let mstKey = col <> "/" <> rk
               withoutOld = filter (\(k, _) -> k /= mstKey) entries
               recCid = cidForDagCbor recordBytes
-          putBlock store recCid recordBytes
+          putBlock s recCid recordBytes
           go (withoutOld ++ [(mstKey, recCid)]) rest
 
         Delete col rk -> do
@@ -321,15 +329,15 @@ loadCommitData
   => s
   -> CidBytes
   -> IO (Either PdsError (CidBytes, BlockMap))
-loadCommitData store commitCid = do
-  mCommitBlock <- getBlock store commitCid
+loadCommitData s commitCid = do
+  mCommitBlock <- getBlock s commitCid
   case mCommitBlock of
     Nothing -> return (Left (PdsBlockNotFound (T.pack (show commitCid))))
     Just commitBytes ->
       case decodeCommitDataRoot commitBytes of
         Left err -> return (Left (PdsCommitDecodeError (T.pack err)))
         Right dataRoot -> do
-          mstBlocks <- collectMstBlocks store dataRoot
+          mstBlocks <- collectMstBlocks s dataRoot
           return (Right (dataRoot, mstBlocks))
 
 -- | Decode just the @data@ field (MST root CID) from a commit block.
@@ -361,13 +369,13 @@ decodeCommitDataRoot bs = do
 -- Recursively traverses the MST, loading each node from storage and
 -- adding it to the block map.
 collectMstBlocks :: BlockStore s => s -> CidBytes -> IO BlockMap
-collectMstBlocks store rootCid = go Map.empty [rootCid]
+collectMstBlocks s rootCid = go Map.empty [rootCid]
   where
     go bmap [] = return bmap
     go bmap (cid:rest)
       | Map.member cid bmap = go bmap rest
       | otherwise = do
-          mBlock <- getBlock store cid
+          mBlock <- getBlock s cid
           case mBlock of
             Nothing -> go bmap rest
             Just raw ->
@@ -389,8 +397,8 @@ loadRecord
   => s
   -> (T.Text, CidBytes)
   -> IO (Either PdsError (T.Text, BS.ByteString))
-loadRecord store (rkey, cid) = do
-  mBlock <- getBlock store cid
+loadRecord s (rkey, cid) = do
+  mBlock <- getBlock s cid
   case mBlock of
     Nothing -> return (Left (PdsBlockNotFound (T.pack (show cid))))
     Just bs -> return (Right (rkey, bs))
@@ -413,15 +421,16 @@ mapMstError (MstDecodeError t)  = PdsMstError ("decode error: " <> t)
 -- initialised or a required block is missing.
 exportRepoCar
   :: (BlockStore s, RepoStore s)
-  => s
-  -> DID
+  => ActorStore s
   -> IO (Either PdsError BL.ByteString)
-exportRepoCar store did = do
-  mHead <- getRepoHead store did
+exportRepoCar store = do
+  let s   = actorStorage store
+      did = actorDid store
+  mHead <- getRepoHead s
   case mHead of
     Nothing -> return (Left (PdsRepoNotFound (unDID did)))
     Just commitCid -> do
-      mCommitBytes <- getBlock store commitCid
+      mCommitBytes <- getBlock s commitCid
       case mCommitBytes of
         Nothing -> return (Left (PdsBlockNotFound (T.pack (show commitCid))))
         Just commitBytes -> do
@@ -430,14 +439,14 @@ exportRepoCar store did = do
             Left err -> return (Left (PdsCommitDecodeError (T.pack err)))
             Right dataRoot -> do
               -- Collect all MST blocks.
-              mstBlocks <- collectMstBlocks store dataRoot
+              mstBlocks <- collectMstBlocks s dataRoot
               -- Collect record CIDs from the MST entries.
               let recordCids = case mstDiff mstBlocks Nothing dataRoot of
                     Left _   -> []
                     Right ws -> map wdCid ws
               -- Fetch record blocks.
               recBlocks <- fmap Map.fromList . mapM (\c -> do
-                mb <- getBlock store c
+                mb <- getBlock s c
                 return (c, maybe BS.empty id mb)) $ recordCids
               -- Assemble the full block map: commit + MST + records.
               let allBlocks = Map.insert commitCid commitBytes
@@ -453,18 +462,18 @@ exportRepoCar store did = do
 -- responsible for validation if needed.
 importRepoCar
   :: (BlockStore s, RepoStore s)
-  => s
-  -> DID
+  => ActorStore s
   -> BL.ByteString    -- ^ CAR bytes
   -> IO (Either PdsError CidBytes)
-importRepoCar store did carBytes =
+importRepoCar store carBytes = do
+  let s = actorStorage store
   case readCarWithRoot (BL.toStrict carBytes) of
     Left err -> return (Left (mapCarError err))
     Right (rootCid, blocks) -> do
       -- Store all blocks.
-      _ <- Map.traverseWithKey (putBlock store) blocks
+      _ <- Map.traverseWithKey (putBlock s) blocks
       -- Set the repo head to the root (commit) CID.
-      setRepoHead store did rootCid
+      setRepoHead s rootCid
       return (Right rootCid)
   where
     mapCarError :: CarError -> PdsError

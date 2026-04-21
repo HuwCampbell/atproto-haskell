@@ -3,7 +3,8 @@
 -- The PDS uses two type classes to abstract over storage backends:
 --
 -- * 'BlockStore' – content-addressed block storage (CID → bytes).
--- * 'RepoStore'  – repository metadata (DID → head commit CID).
+-- * 'RepoStore'  – repository head pointer (no DID; the store is already
+--   scoped to a single actor via 'ATProto.PDS.ActorStore.ActorStore').
 --
 -- Implement these for your preferred backend.  The library ships with
 -- an in-memory implementation ('ATProto.PDS.Storage.InMemory') and a
@@ -11,14 +12,13 @@
 module ATProto.PDS.Storage
   ( -- * Block storage
     BlockStore (..)
-    -- * Repository metadata
+    -- * Repository head
   , RepoStore (..)
   ) where
 
 import qualified Data.ByteString as BS
 
-import ATProto.Car.Cid    (CidBytes)
-import ATProto.Syntax.DID (DID)
+import ATProto.Car.Cid (CidBytes)
 
 -- | Content-addressed block storage.
 --
@@ -31,13 +31,15 @@ class BlockStore s where
   --   is idempotent.
   putBlock :: s -> CidBytes -> BS.ByteString -> IO ()
 
--- | Repository head metadata.
+-- | Repository head pointer.
 --
--- Maps each repository (identified by its owner DID) to the CID of
--- the latest signed commit.
-class RepoStore s where
-  -- | Get the head commit CID for a repository, or 'Nothing' if the
-  --   repository has not been initialised.
-  getRepoHead :: s -> DID -> IO (Maybe CidBytes)
-  -- | Set the head commit CID for a repository.
-  setRepoHead :: s -> DID -> CidBytes -> IO ()
+-- Stores the CID of the latest signed commit for the actor this store
+-- is scoped to.  There is no DID parameter: the store is already
+-- implicitly scoped to a single actor by
+-- 'ATProto.PDS.ActorStore.openActorStore'.
+class BlockStore s => RepoStore s where
+  -- | Get the head commit CID, or 'Nothing' if the repository has not
+  --   been initialised.
+  getRepoHead :: s -> IO (Maybe CidBytes)
+  -- | Set the head commit CID.
+  setRepoHead :: s -> CidBytes -> IO ()

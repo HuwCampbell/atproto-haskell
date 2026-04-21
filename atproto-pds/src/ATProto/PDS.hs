@@ -9,12 +9,15 @@
 -- Or import individual sub-modules for finer-grained control:
 --
 -- @
--- import ATProto.PDS.Storage
+-- import ATProto.PDS.Storage      -- BlockStore, RepoStore
+-- import ATProto.PDS.ActorStore   -- ActorStore, ActorStoreBackend
 -- import ATProto.PDS.Repo
 -- @
 module ATProto.PDS
-  ( -- * Storage
+  ( -- * Storage type classes
     module ATProto.PDS.Storage
+    -- * Actor store abstraction
+  , module ATProto.PDS.ActorStore
     -- * Storage backends
   , module ATProto.PDS.Storage.InMemory
   , module ATProto.PDS.Storage.FileSystem
@@ -25,6 +28,7 @@ module ATProto.PDS
   ) where
 
 import ATProto.PDS.Storage
+import ATProto.PDS.ActorStore
 import ATProto.PDS.Storage.InMemory
 import ATProto.PDS.Storage.FileSystem
 import ATProto.PDS.Commit
