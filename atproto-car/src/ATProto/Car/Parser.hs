@@ -109,32 +109,31 @@ parseHeader hdrBytes =
 -- ---------------------------------------------------------------------------
 
 -- | Parse all data blocks from @offset@ to end-of-input.
-parseBlocks :: BS.ByteString -> Int -> Either CarError BlockMap -> Either CarError BlockMap
-parseBlocks bs off accE
-  | off >= BS.length bs = accE
+parseBlocks :: BS.ByteString -> Int -> BlockMap -> Either CarError BlockMap
+parseBlocks bs off acc
+  | off >= BS.length bs = Right acc
   | otherwise = do
-      acc <- accE
       (entryLen, vLen) <- decodeVarint bs off
       let off1 = off + vLen
-      if off1 + entryLen > BS.length bs
-        then Left (CarBadBlock "block entry extends beyond input")
-        else do
-          let entry = BS.take entryLen (BS.drop off1 bs)
-          (cid, cidLen) <-
-            case parseCidFromBytes entry 0 of
-              Left  err       -> Left (CarBadCid (T.pack err))
-              Right (c, n)    -> Right (c, n)
-          let blockBytes = BS.drop cidLen entry
-              expectedCid = cidForDagCbor blockBytes   -- recompute from content
+      if off1 + entryLen > BS.length bs then
+        Left (CarBadBlock "block entry extends beyond input")
+      else do
+        let entry = BS.take entryLen (BS.drop off1 bs)
+        (cid, cidLen) <-
+          case parseCidFromBytes entry 0 of
+            Left  err       -> Left (CarBadCid (T.pack err))
+            Right (c, n)    -> Right (c, n)
+        let blockBytes = BS.drop cidLen entry
+            expectedCid = cidForDagCbor blockBytes   -- recompute from content
 
-          --
-          -- Critical security check, if we omit this, then it's possible that
-          -- a malicious actor could sneak in a CAR file into a trusted boundary
-          -- which contains unverified information.
-          unless (cid == expectedCid) $
-            Left (CarBadBlock "CID does not match block content")
+        --
+        -- Critical security check, if we omit this, then it's possible that
+        -- a malicious actor could sneak in a CAR file into a trusted boundary
+        -- which contains unverified information.
+        unless (cid == expectedCid) $
+          Left (CarBadBlock "CID does not match block content")
 
-          parseBlocks bs (off1 + entryLen) (Right (Map.insert cid blockBytes acc))
+        parseBlocks bs (off1 + entryLen) (Map.insert cid blockBytes acc)
 
 -- ---------------------------------------------------------------------------
 -- Public API
@@ -152,7 +151,7 @@ readCar bs = do
       let hdrBytes  = BS.take hdrLen (BS.drop vLen bs)
           blocksOff = vLen + hdrLen
       roots  <- parseHeader hdrBytes
-      blocks <- parseBlocks bs blocksOff (Right Map.empty)
+      blocks <- parseBlocks bs blocksOff Map.empty
       return (roots, blocks)
 
 -- | Parse a CAR v1 byte string that must have exactly one root CID.
