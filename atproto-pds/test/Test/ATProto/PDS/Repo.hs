@@ -12,7 +12,8 @@ import ATProto.Crypto.EC            (generateKeyPair)
 import ATProto.Crypto.Types         (Curve (..), PrivKey)
 import ATProto.MST.Encode           (cidForDagCbor)
 import ATProto.Syntax.DID           (DID, parseDID)
-import ATProto.PDS.Storage.InMemory (InMemoryStore, newInMemoryStore)
+import ATProto.PDS.Storage.InMemory (InMemoryBackend, InMemoryActorStore, newInMemoryBackend)
+import ATProto.PDS.ActorStore       (ActorStore, ActorStoreBackend (..))
 import ATProto.PDS.Repo
 
 -- ---------------------------------------------------------------------------
@@ -51,7 +52,7 @@ testDID = case parseDID "did:plc:testuser123" of
 prop_initRepo :: Property
 prop_initRepo = withTests 10 . property $ do
   (store, key) <- evalIO setup
-  result <- evalIO (initRepo store testDID key)
+  result <- evalIO (initRepo store key)
   case result of
     Left err  -> do
       annotate (show err)
@@ -65,13 +66,13 @@ prop_initRepo = withTests 10 . property $ do
 prop_initRepoTwice :: Property
 prop_initRepoTwice = withTests 5 . property $ do
   (store, key) <- evalIO setup
-  r1 <- evalIO (initRepo store testDID key)
+  r1 <- evalIO (initRepo store key)
   case r1 of
     Left err -> do
       annotate (show err)
       failure
     Right _ -> do
-      r2 <- evalIO (initRepo store testDID key)
+      r2 <- evalIO (initRepo store key)
       case r2 of
         Left (PdsRepoAlreadyExists _) -> success
         Left err -> do
@@ -88,8 +89,8 @@ prop_createGetRoundTrip = withTests 20 . property $ do
   rk   <- forAll genRecordKey
   body <- forAll genRecordBytes
   (store, key) <- evalIO setup
-  _ <- evalEither =<< evalIO (initRepo store testDID key)
-  commitCid <- evalEither =<< evalIO (createRecord store testDID key col rk body)
+  _ <- evalEither =<< evalIO (initRepo store key)
+  commitCid <- evalEither =<< evalIO (createRecord store key col rk body)
   result <- evalEither =<< evalIO (getRecord store commitCid col rk)
   result === Just body
 
@@ -97,7 +98,7 @@ prop_createGetRoundTrip = withTests 20 . property $ do
 prop_getMissing :: Property
 prop_getMissing = withTests 10 . property $ do
   (store, key) <- evalIO setup
-  commitCid <- evalEither =<< evalIO (initRepo store testDID key)
+  commitCid <- evalEither =<< evalIO (initRepo store key)
   result <- evalEither =<< evalIO (getRecord store commitCid "com.example" "missing")
   result === Nothing
 
@@ -115,7 +116,7 @@ prop_createListRecords = withTests 15 . property $ do
   let uniquePairs = dedup pairs
 
   (store, key) <- evalIO setup
-  _ <- evalEither =<< evalIO (initRepo store testDID key)
+  _ <- evalEither =<< evalIO (initRepo store key)
 
   -- Create records one at a time.
   lastCommit <- evalIO (createRecords store key col uniquePairs)
@@ -144,9 +145,9 @@ prop_deleteRecord = withTests 10 . property $ do
   rk   <- forAll genRecordKey
   body <- forAll genRecordBytes
   (store, key) <- evalIO setup
-  _ <- evalEither =<< evalIO (initRepo store testDID key)
-  _ <- evalEither =<< evalIO (createRecord store testDID key col rk body)
-  delCommit <- evalEither =<< evalIO (deleteRecord store testDID key col rk)
+  _ <- evalEither =<< evalIO (initRepo store key)
+  _ <- evalEither =<< evalIO (createRecord store key col rk body)
+  delCommit <- evalEither =<< evalIO (deleteRecord store key col rk)
   result <- evalEither =<< evalIO (getRecord store delCommit col rk)
   result === Nothing
 
@@ -154,8 +155,8 @@ prop_deleteRecord = withTests 10 . property $ do
 prop_deleteNonExistent :: Property
 prop_deleteNonExistent = withTests 5 . property $ do
   (store, key) <- evalIO setup
-  _ <- evalEither =<< evalIO (initRepo store testDID key)
-  result <- evalIO (deleteRecord store testDID key "com.example" "nope")
+  _ <- evalEither =<< evalIO (initRepo store key)
+  result <- evalIO (deleteRecord store key "com.example" "nope")
   case result of
     Left (PdsRecordNotFound _) -> success
     Left err -> do
@@ -175,9 +176,9 @@ prop_multipleCollections = withTests 10 . property $ do
   body2 <- forAll genRecordBytes
   (store, key) <- evalIO setup
 
-  _ <- evalEither =<< evalIO (initRepo store testDID key)
-  _ <- evalEither =<< evalIO (createRecord store testDID key col1 rk body1)
-  commit <- evalEither =<< evalIO (createRecord store testDID key col2 rk body2)
+  _ <- evalEither =<< evalIO (initRepo store key)
+  _ <- evalEither =<< evalIO (createRecord store key col1 rk body1)
+  commit <- evalEither =<< evalIO (createRecord store key col2 rk body2)
 
   -- Both records should be retrievable.
   r1 <- evalEither =<< evalIO (getRecord store commit col1 rk)
@@ -202,9 +203,9 @@ prop_updateRecord = withTests 10 . property $ do
   body2 <- forAll (Gen.filter (/= body1) genRecordBytes)
   (store, key) <- evalIO setup
 
-  _ <- evalEither =<< evalIO (initRepo store testDID key)
-  _ <- evalEither =<< evalIO (createRecord store testDID key col rk body1)
-  commit <- evalEither =<< evalIO (applyWrites store testDID key [Update col rk body2])
+  _ <- evalEither =<< evalIO (initRepo store key)
+  _ <- evalEither =<< evalIO (createRecord store key col rk body1)
+  commit <- evalEither =<< evalIO (applyWrites store key [Update col rk body2])
 
   r <- evalEither =<< evalIO (getRecord store commit col rk)
   r === Just body2
@@ -228,15 +229,16 @@ prop_exportImportRoundTrip = withTests 10 . property $ do
   body <- forAll genRecordBytes
   (store1, key) <- evalIO setup
 
-  _ <- evalEither =<< evalIO (initRepo store1 testDID key)
-  commit1 <- evalEither =<< evalIO (createRecord store1 testDID key col rk body)
+  _ <- evalEither =<< evalIO (initRepo store1 key)
+  commit1 <- evalEither =<< evalIO (createRecord store1 key col rk body)
 
   -- Export.
-  carBytes <- evalEither =<< evalIO (exportRepoCar store1 testDID)
+  carBytes <- evalEither =<< evalIO (exportRepoCar store1)
 
   -- Import into a fresh store.
-  store2 <- evalIO newInMemoryStore
-  commit2 <- evalEither =<< evalIO (importRepoCar store2 testDID carBytes)
+  backend2 <- evalIO newInMemoryBackend
+  store2 <- evalIO (openActorStore backend2 testDID)
+  commit2 <- evalEither =<< evalIO (importRepoCar store2 carBytes)
 
   -- The commit CID should be the same.
   commit2 === commit1
@@ -250,12 +252,13 @@ prop_exportImportRoundTrip = withTests 10 . property $ do
 prop_exportImportEmpty :: Property
 prop_exportImportEmpty = withTests 5 . property $ do
   (store1, key) <- evalIO setup
-  _ <- evalEither =<< evalIO (initRepo store1 testDID key)
+  _ <- evalEither =<< evalIO (initRepo store1 key)
 
-  carBytes <- evalEither =<< evalIO (exportRepoCar store1 testDID)
+  carBytes <- evalEither =<< evalIO (exportRepoCar store1)
 
-  store2 <- evalIO newInMemoryStore
-  commit2 <- evalEither =<< evalIO (importRepoCar store2 testDID carBytes)
+  backend2 <- evalIO newInMemoryBackend
+  store2 <- evalIO (openActorStore backend2 testDID)
+  commit2 <- evalEither =<< evalIO (importRepoCar store2 carBytes)
 
   recs <- evalEither =<< evalIO (listRecords store2 commit2 "any.collection")
   recs === []
@@ -264,23 +267,24 @@ prop_exportImportEmpty = withTests 5 . property $ do
 -- Helpers
 -- ---------------------------------------------------------------------------
 
-setup :: IO (InMemoryStore, PrivKey)
+setup :: IO (ActorStore InMemoryActorStore, PrivKey)
 setup = do
-  store <- newInMemoryStore
+  backend <- newInMemoryBackend
+  store <- openActorStore backend testDID
   (priv, _pub) <- generateKeyPair P256
   return (store, priv)
 
 createRecords
-  :: InMemoryStore
+  :: ActorStore InMemoryActorStore
   -> PrivKey
   -> T.Text
   -> [(T.Text, BS.ByteString)]
   -> IO (Either PdsError CidBytes)
 createRecords _store _key _col [] = error "createRecords: empty list"
 createRecords store key col [(rk, body)] =
-  createRecord store testDID key col rk body
+  createRecord store key col rk body
 createRecords store key col ((rk, body):rest) = do
-  r <- createRecord store testDID key col rk body
+  r <- createRecord store key col rk body
   case r of
     Left err -> return (Left err)
     Right _  -> createRecords store key col rest

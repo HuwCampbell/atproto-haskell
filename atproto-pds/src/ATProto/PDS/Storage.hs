@@ -5,6 +5,10 @@
 -- * 'BlockStore' – content-addressed block storage (CID → bytes).
 -- * 'RepoStore'  – repository metadata (DID → head commit CID).
 --
+-- For new code, prefer the DID-scoped 'ATProto.PDS.ActorStore.ActorStorage'
+-- interface in "ATProto.PDS.ActorStore", which eliminates the DID parameter
+-- from every call site and makes per-DID backends a natural fit.
+--
 -- Implement these for your preferred backend.  The library ships with
 -- an in-memory implementation ('ATProto.PDS.Storage.InMemory') and a
 -- file-system implementation ('ATProto.PDS.Storage.FileSystem').

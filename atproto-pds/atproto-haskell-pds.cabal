@@ -28,6 +28,7 @@ library
   exposed-modules:
       ATProto.PDS
       ATProto.PDS.Storage
+      ATProto.PDS.ActorStore
       ATProto.PDS.Storage.InMemory
       ATProto.PDS.Storage.FileSystem
       ATProto.PDS.Commit

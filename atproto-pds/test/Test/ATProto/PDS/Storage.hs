@@ -15,8 +15,8 @@ import ATProto.Car.Cid                (CidBytes, unsafeRawCid)
 import ATProto.Crypto.EC              (generateKeyPair)
 import ATProto.Crypto.Types           (Curve (..), PrivKey)
 import ATProto.Syntax.DID             (DID, parseDID)
-import ATProto.PDS.Storage            (BlockStore (..), RepoStore (..))
-import ATProto.PDS.Storage.FileSystem (FileStore, newFileStore)
+import ATProto.PDS.ActorStore         (ActorStorage (..), ActorStore, ActorStoreBackend (..), actorStorage)
+import ATProto.PDS.Storage.FileSystem (FileBackend, FileActorStore, newFileBackend)
 import ATProto.PDS.Repo
 
 -- ---------------------------------------------------------------------------
@@ -38,13 +38,14 @@ testDID = case parseDID "did:plc:filetest" of
   Right d -> d
   Left  e -> error ("testDID: " ++ e)
 
-setupFileStore :: IO (FileStore, PrivKey)
+setupFileStore :: IO (ActorStore FileActorStore, PrivKey)
 setupFileStore = do
   tmpDir <- getTemporaryDirectory
   let testDir = tmpDir </> "atproto-pds-test-filestore"
   exists <- doesDirectoryExist testDir
   if exists then removeDirectoryRecursive testDir else return ()
-  store <- newFileStore testDir
+  backend <- newFileBackend testDir
+  store <- openActorStore backend testDID
   (priv, _pub) <- generateKeyPair P256
   return (store, priv)
 
@@ -57,22 +58,24 @@ prop_blockStoreRoundTrip :: Property
 prop_blockStoreRoundTrip = withTests 5 . property $ do
   body <- forAll genRecordBytes
   (store, _) <- evalIO setupFileStore
-  let cid = unsafeRawCid (BS.pack [0x01, 0x71, 0x12, 0x20] <> BS.replicate 32 0x42)
-  evalIO (putBlock store cid body)
-  result <- evalIO (getBlock store cid)
+  let s   = actorStorage store
+      cid = unsafeRawCid (BS.pack [0x01, 0x71, 0x12, 0x20] <> BS.replicate 32 0x42)
+  evalIO (putBlock s cid body)
+  result <- evalIO (getBlock s cid)
   result === Just body
 
 -- | Repo head round-trip: set then get returns the same CID.
 prop_repoHeadRoundTrip :: Property
 prop_repoHeadRoundTrip = withTests 5 . property $ do
   (store, _) <- evalIO setupFileStore
-  let cid = unsafeRawCid (BS.pack [0x01, 0x71, 0x12, 0x20] <> BS.replicate 32 0xAB)
+  let s   = actorStorage store
+      cid = unsafeRawCid (BS.pack [0x01, 0x71, 0x12, 0x20] <> BS.replicate 32 0xAB)
   -- Initially, no head.
-  initial <- evalIO (getRepoHead store testDID)
+  initial <- evalIO (getRepoHead s)
   initial === Nothing
   -- After setting, it should be the CID we set.
-  evalIO (setRepoHead store testDID cid)
-  result <- evalIO (getRepoHead store testDID)
+  evalIO (setRepoHead s cid)
+  result <- evalIO (getRepoHead s)
   result === Just cid
 
 -- | File-backed create/get round-trip.
@@ -81,8 +84,8 @@ prop_fileStoreCreateGet = withTests 10 . property $ do
   body <- forAll genRecordBytes
   rk   <- forAll genRecordKey
   (store, key) <- evalIO setupFileStore
-  _ <- evalEither =<< evalIO (initRepo store testDID key)
-  commitCid <- evalEither =<< evalIO (createRecord store testDID key "com.test.record" rk body)
+  _ <- evalEither =<< evalIO (initRepo store key)
+  commitCid <- evalEither =<< evalIO (createRecord store key "com.test.record" rk body)
   result <- evalEither =<< evalIO (getRecord store commitCid "com.test.record" rk)
   result === Just body
 

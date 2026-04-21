@@ -1,16 +1,32 @@
+{-# LANGUAGE TypeFamilies #-}
 -- | File-system storage backend.
 --
--- Blocks are stored as individual files in a @blocks/@ subdirectory,
--- named by their base32-encoded CID.  Repository heads are stored in
--- a @heads/@ subdirectory, keyed by a sanitised DID.
+-- The module exposes two levels of API:
+--
+-- * 'FileStore' / 'newFileStore' — a global file-system store implementing
+--   the legacy 'BlockStore' and 'RepoStore' type classes (kept for
+--   backward compatibility).  Blocks live in a flat @blocks\/@ directory
+--   shared across all DIDs.
+--
+-- * 'FileBackend' / 'newFileBackend' — a factory that implements
+--   'ActorStoreBackend', producing per-DID 'FileActorStore' values that
+--   implement 'ActorStorage'.  Blocks are stored under
+--   @blocks\/\<sanitised-did\>\/@ so each actor's data is physically
+--   isolated.  This is the preferred API for use with "ATProto.PDS.Repo".
 --
 -- @
--- store <- newFileStore "\/tmp\/my-pds"
--- Right commitCid <- initRepo store did privKey
+-- backend <- newFileBackend "\/tmp\/my-pds"
+-- store   <- openActorStore backend did
+-- Right _commit <- initRepo store privKey
 -- @
 module ATProto.PDS.Storage.FileSystem
-  ( FileStore
+  ( -- * Legacy global store
+    FileStore
   , newFileStore
+    -- * Per-actor backend
+  , FileBackend
+  , newFileBackend
+  , FileActorStore
   ) where
 
 import qualified Data.ByteString as BS
@@ -22,13 +38,21 @@ import System.FilePath   ((</>))
 import ATProto.Car.Cid     (CidBytes, cidToText, textToCidBytes)
 import ATProto.Syntax.DID  (DID, unDID)
 import ATProto.PDS.Storage (BlockStore (..), RepoStore (..))
+import ATProto.PDS.ActorStore (ActorStorage (..), ActorStore (..), ActorStoreBackend (..))
+
+-- ---------------------------------------------------------------------------
+-- Legacy global store
+-- ---------------------------------------------------------------------------
 
 -- | A file-system–backed store rooted at a given directory.
+--
+-- This type is kept for backward compatibility.  Prefer 'FileBackend'
+-- for new code.
 data FileStore = FileStore
   { fsBlockDir :: FilePath
-    -- ^ Directory for block files.
+    -- ^ Directory for block files (shared across all DIDs).
   , fsHeadDir  :: FilePath
-    -- ^ Directory for head pointer files.
+    -- ^ Directory for head pointer files (one file per DID).
   }
 
 -- | Create a 'FileStore' rooted at @basedir@.
@@ -81,6 +105,82 @@ instance RepoStore FileStore where
 
 headPath :: FileStore -> DID -> FilePath
 headPath s did = fsHeadDir s </> sanitiseDID did
+
+-- ---------------------------------------------------------------------------
+-- Per-actor store
+-- ---------------------------------------------------------------------------
+
+-- | A per-actor file-system store scoped to a single DID.
+--
+-- Blocks are stored under @\<basedir\>\/blocks\/\<sanitised-did\>\/@ and
+-- the head pointer lives at @\<basedir\>\/heads\/\<sanitised-did\>@.
+data FileActorStore = FileActorStore
+  { fasBlockDir :: FilePath
+    -- ^ Directory for this actor's block files.
+  , fasHeadFile :: FilePath
+    -- ^ Path to this actor's head pointer file.
+  }
+
+instance ActorStorage FileActorStore where
+  getBlock s cid = do
+    let path = fasBlockDir s </> T.unpack (cidToText cid)
+    exists <- doesFileExist path
+    if exists
+      then Just <$> BS.readFile path
+      else return Nothing
+
+  putBlock s cid bs =
+    BS.writeFile (fasBlockDir s </> T.unpack (cidToText cid)) bs
+
+  getRepoHead s = do
+    let path = fasHeadFile s
+    exists <- doesFileExist path
+    if exists
+      then do
+        cidText <- T.pack <$> readFile path
+        case textToCidBytes cidText of
+          Right cid -> return (Just cid)
+          Left _    -> return Nothing
+      else return Nothing
+
+  setRepoHead s cid =
+    writeFile (fasHeadFile s) (T.unpack (cidToText cid))
+
+-- ---------------------------------------------------------------------------
+-- Backend (factory)
+-- ---------------------------------------------------------------------------
+
+-- | A file-system backend rooted at a given directory.
+--
+-- Each actor's blocks are stored under @\<basedir\>\/blocks\/\<sanitised-did\>\/@
+-- and its head pointer at @\<basedir\>\/heads\/\<sanitised-did\>@.
+data FileBackend = FileBackend
+  { fbBaseDir :: FilePath
+    -- ^ Root directory for the backend.
+  }
+
+-- | Create a 'FileBackend' rooted at @basedir@.
+--
+-- Creates @basedir\/blocks\/@ and @basedir\/heads\/@ if they do not
+-- already exist.
+newFileBackend :: FilePath -> IO FileBackend
+newFileBackend basedir = do
+  createDirectoryIfMissing True (basedir </> "blocks")
+  createDirectoryIfMissing True (basedir </> "heads")
+  return (FileBackend basedir)
+
+instance ActorStoreBackend FileBackend where
+  type ActorStorageOf FileBackend = FileActorStore
+
+  openActorStore b did = do
+    let bd = fbBaseDir b </> "blocks" </> sanitiseDID did
+        hf = fbBaseDir b </> "heads"  </> sanitiseDID did
+    createDirectoryIfMissing True bd
+    return (ActorStore did (FileActorStore bd hf))
+
+-- ---------------------------------------------------------------------------
+-- Internal helpers
+-- ---------------------------------------------------------------------------
 
 -- | Produce a file-system–safe name from a DID.
 --
