@@ -4,9 +4,9 @@
 -- repositories: initialisation, record creation\/retrieval\/listing\/deletion,
 -- and batch writes.
 --
--- All operations are generic over any storage backend that implements
--- 'ActorStorage', and they receive an 'ActorStore' that bundles the
--- target DID with its per-actor storage handle.
+-- All operations are generic over any storage backend.  They receive an
+-- 'ActorStore' that bundles the target DID with its per-actor storage
+-- handle, which implements both 'BlockStore' and 'RepoStore'.
 --
 -- @
 -- import ATProto.PDS.Storage.InMemory (newInMemoryBackend)
@@ -67,7 +67,8 @@ import ATProto.MST.Types     (MstError (..))
 import ATProto.Crypto.Types  (PrivKey)
 import ATProto.Syntax.DID    (unDID)
 import ATProto.Syntax.TID    (tidNow, unTID)
-import ATProto.PDS.ActorStore (ActorStorage (..), ActorStore (..))
+import ATProto.PDS.Storage   (BlockStore (..), RepoStore (..))
+import ATProto.PDS.ActorStore (ActorStore (..))
 import ATProto.PDS.Commit    (createSignedCommit)
 
 -- ---------------------------------------------------------------------------
@@ -104,7 +105,7 @@ data PdsError
 -- Returns the CID of the initial commit, or 'PdsRepoAlreadyExists' if
 -- the actor already has a repository.
 initRepo
-  :: ActorStorage s
+  :: (BlockStore s, RepoStore s)
   => ActorStore s -> PrivKey -> IO (Either PdsError CidBytes)
 initRepo store key = do
   let s   = actorStorage store
@@ -139,7 +140,7 @@ initRepo store key = do
 --
 -- Returns the CID of the new commit.
 createRecord
-  :: ActorStorage s
+  :: (BlockStore s, RepoStore s)
   => ActorStore s
   -> PrivKey
   -> T.Text           -- ^ Collection NSID (e.g. @\"app.bsky.feed.post\"@)
@@ -154,7 +155,7 @@ createRecord store key collection rkey recordBytes =
 -- Returns the raw record bytes if found, 'Nothing' if the key does not
 -- exist in the collection, or a 'PdsError' on storage/decoding failures.
 getRecord
-  :: ActorStorage s
+  :: BlockStore s
   => ActorStore s
   -> CidBytes         -- ^ Commit CID (head of the repo)
   -> T.Text           -- ^ Collection NSID
@@ -180,7 +181,7 @@ getRecord store commitCid collection rkey = do
 --
 -- Returns @(recordKey, recordBytes)@ pairs sorted by record key.
 listRecords
-  :: ActorStorage s
+  :: BlockStore s
   => ActorStore s
   -> CidBytes         -- ^ Commit CID (head of the repo)
   -> T.Text           -- ^ Collection NSID
@@ -208,7 +209,7 @@ listRecords store commitCid collection = do
 -- Removes the record's MST entry and creates a new signed commit.
 -- Returns the CID of the new commit.
 deleteRecord
-  :: ActorStorage s
+  :: (BlockStore s, RepoStore s)
   => ActorStore s
   -> PrivKey
   -> T.Text           -- ^ Collection NSID
@@ -236,7 +237,7 @@ data WriteOp
 -- All operations are applied atomically: the MST is rebuilt and a
 -- single new commit is signed.  Returns the CID of the new commit.
 applyWrites
-  :: ActorStorage s
+  :: (BlockStore s, RepoStore s)
   => ActorStore s -> PrivKey -> [WriteOp]
   -> IO (Either PdsError CidBytes)
 applyWrites store key ops = do
@@ -289,7 +290,7 @@ applyWrites store key ops = do
 
 -- | Apply a list of write operations to the current entry list.
 applyOps
-  :: ActorStorage s
+  :: BlockStore s
   => s
   -> [(T.Text, CidBytes)]   -- ^ current entries
   -> [WriteOp]
@@ -324,7 +325,7 @@ applyOps s = go
 
 -- | Load the commit's data root CID and all MST blocks.
 loadCommitData
-  :: ActorStorage s
+  :: BlockStore s
   => s
   -> CidBytes
   -> IO (Either PdsError (CidBytes, BlockMap))
@@ -367,7 +368,7 @@ decodeCommitDataRoot bs = do
 --
 -- Recursively traverses the MST, loading each node from storage and
 -- adding it to the block map.
-collectMstBlocks :: ActorStorage s => s -> CidBytes -> IO BlockMap
+collectMstBlocks :: BlockStore s => s -> CidBytes -> IO BlockMap
 collectMstBlocks s rootCid = go Map.empty [rootCid]
   where
     go bmap [] = return bmap
@@ -392,7 +393,7 @@ collectMstBlocks s rootCid = go Map.empty [rootCid]
 
 -- | Load a record block by its CID.
 loadRecord
-  :: ActorStorage s
+  :: BlockStore s
   => s
   -> (T.Text, CidBytes)
   -> IO (Either PdsError (T.Text, BS.ByteString))
@@ -419,7 +420,7 @@ mapMstError (MstDecodeError t)  = PdsMstError ("decode error: " <> t)
 -- Returns the CAR bytes, or a 'PdsError' if the repository is not
 -- initialised or a required block is missing.
 exportRepoCar
-  :: ActorStorage s
+  :: (BlockStore s, RepoStore s)
   => ActorStore s
   -> IO (Either PdsError BL.ByteString)
 exportRepoCar store = do
@@ -460,7 +461,7 @@ exportRepoCar store = do
 -- This does /not/ verify signatures or MST integrity; the caller is
 -- responsible for validation if needed.
 importRepoCar
-  :: ActorStorage s
+  :: (BlockStore s, RepoStore s)
   => ActorStore s
   -> BL.ByteString    -- ^ CAR bytes
   -> IO (Either PdsError CidBytes)

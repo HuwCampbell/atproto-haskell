@@ -4,28 +4,20 @@
 -- Uses 'IORef'-wrapped 'Data.Map.Strict.Map's.  Suitable for tests and
 -- short-lived processes where persistence is not required.
 --
--- The module exposes two levels of API:
---
--- * 'InMemoryStore' / 'newInMemoryStore' — a global store implementing
---   the legacy 'BlockStore' and 'RepoStore' type classes (kept for
---   backward compatibility).
---
--- * 'InMemoryBackend' / 'newInMemoryBackend' — a factory that implements
---   'ActorStoreBackend', producing per-DID 'InMemoryActorStore' values
---   that implement 'ActorStorage'.  This is the preferred API for use
---   with "ATProto.PDS.Repo".
+-- Create a backend with 'newInMemoryBackend', then open per-actor stores
+-- with 'openActorStore':
 --
 -- @
 -- backend <- newInMemoryBackend
 -- store   <- openActorStore backend did
 -- Right _commit <- initRepo store privKey
 -- @
+--
+-- Opening the same DID twice returns the same underlying store, so blocks
+-- and the head pointer are shared within a DID but isolated between DIDs.
 module ATProto.PDS.Storage.InMemory
-  ( -- * Legacy global store
-    InMemoryStore
-  , newInMemoryStore
-    -- * Per-actor backend
-  , InMemoryBackend
+  ( -- * Per-actor backend
+    InMemoryBackend
   , newInMemoryBackend
   , InMemoryActorStore
   ) where
@@ -37,32 +29,7 @@ import           Data.IORef
 import ATProto.Car.Cid        (CidBytes)
 import ATProto.Syntax.DID     (DID)
 import ATProto.PDS.Storage    (BlockStore (..), RepoStore (..))
-import ATProto.PDS.ActorStore (ActorStorage (..), ActorStore (..), ActorStoreBackend (..))
-
--- ---------------------------------------------------------------------------
--- Legacy global store
--- ---------------------------------------------------------------------------
-
--- | An in-memory store backed by 'IORef' 'Map's.
---
--- This type is kept for backward compatibility.  Prefer
--- 'InMemoryBackend' for new code.
-data InMemoryStore = InMemoryStore
-  { imsBlocks :: IORef (Map.Map CidBytes BS.ByteString)
-  , imsHeads  :: IORef (Map.Map DID CidBytes)
-  }
-
--- | Create a fresh, empty in-memory store.
-newInMemoryStore :: IO InMemoryStore
-newInMemoryStore = InMemoryStore <$> newIORef Map.empty <*> newIORef Map.empty
-
-instance BlockStore InMemoryStore where
-  getBlock s cid  = Map.lookup cid <$> readIORef (imsBlocks s)
-  putBlock s cid bs = modifyIORef' (imsBlocks s) (Map.insert cid bs)
-
-instance RepoStore InMemoryStore where
-  getRepoHead s did = Map.lookup did <$> readIORef (imsHeads s)
-  setRepoHead s did cid = modifyIORef' (imsHeads s) (Map.insert did cid)
+import ATProto.PDS.ActorStore (ActorStore (..), ActorStoreBackend (..))
 
 -- ---------------------------------------------------------------------------
 -- Per-actor store
@@ -70,16 +37,20 @@ instance RepoStore InMemoryStore where
 
 -- | A per-actor in-memory store scoped to a single DID.
 --
--- Instances of 'ActorStorage' are created by 'InMemoryBackend' via
--- 'openActorStore'.
+-- Implements both 'BlockStore' and 'RepoStore'.  Created automatically
+-- by 'InMemoryBackend' via 'openActorStore'.
 data InMemoryActorStore = InMemoryActorStore
   { imasBlocks :: IORef (Map.Map CidBytes BS.ByteString)
   , imasHead   :: IORef (Maybe CidBytes)
   }
 
-instance ActorStorage InMemoryActorStore where
+instance BlockStore InMemoryActorStore where
   getBlock s cid    = Map.lookup cid <$> readIORef (imasBlocks s)
   putBlock s cid bs = modifyIORef' (imasBlocks s) (Map.insert cid bs)
+
+-- | The 'RepoStore' instance has no DID parameter; this store is already
+--   scoped to a single actor by 'InMemoryBackend'.
+instance RepoStore InMemoryActorStore where
   getRepoHead s     = readIORef (imasHead s)
   setRepoHead s cid = writeIORef (imasHead s) (Just cid)
 
@@ -109,4 +80,3 @@ instance ActorStoreBackend InMemoryBackend where
         s <- InMemoryActorStore <$> newIORef Map.empty <*> newIORef Nothing
         modifyIORef' (imbActors b) (Map.insert did s)
         return (ActorStore did s)
-

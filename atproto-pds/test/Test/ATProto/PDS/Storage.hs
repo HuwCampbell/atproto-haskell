@@ -15,7 +15,8 @@ import ATProto.Car.Cid                (CidBytes, unsafeRawCid)
 import ATProto.Crypto.EC              (generateKeyPair)
 import ATProto.Crypto.Types           (Curve (..), PrivKey)
 import ATProto.Syntax.DID             (DID, parseDID)
-import ATProto.PDS.ActorStore         (ActorStorage (..), ActorStore, ActorStoreBackend (..), actorStorage)
+import ATProto.PDS.Storage            (BlockStore (..), RepoStore (..))
+import ATProto.PDS.ActorStore         (ActorStore, ActorStoreBackend (..), actorStorage)
 import ATProto.PDS.Storage.FileSystem (FileBackend, FileActorStore, newFileBackend)
 import ATProto.PDS.Repo
 

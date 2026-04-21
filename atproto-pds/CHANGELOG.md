@@ -2,26 +2,28 @@
 
 ## 0.2.0.0 -- 2026-04-21
 
-* Introduced `ActorStorage` type class in `ATProto.PDS.Storage`: a
-  DID-scoped storage interface with no DID in any method signature.
-* Added `ATProto.PDS.ActorStore` module exposing `ActorStore` (bundles a
-  DID with its per-actor storage handle) and `ActorStoreBackend` (factory
-  class for opening per-DID stores via `openActorStore`).
+* Redesigned `RepoStore` to be DID-free: `getRepoHead` and `setRepoHead`
+  no longer take a `DID` parameter.  The store is now implicitly scoped to
+  a single actor, opened via `openActorStore`.
+* Added `ATProto.PDS.ActorStore` module exposing:
+  - `ActorStore` – bundles a DID with its per-actor storage value (which
+    implements both `BlockStore` and `RepoStore`).
+  - `ActorStoreBackend` – factory class for opening per-DID stores via
+    `openActorStore`.  The superclass constraint ensures the associated
+    storage type implements both `BlockStore` and `RepoStore`.
+  - `withActorStore` – convenience combinator.
 * Updated all repository operations in `ATProto.PDS.Repo` to accept
-  `ActorStore s` instead of `(s, DID)`, matching upstream's actor-store
-  pattern and making cross-actor block writes structurally impossible.
+  `ActorStore s` with a `(BlockStore s, RepoStore s)` constraint instead of
+  `(s, DID)`, matching upstream's actor-store pattern.
 * `ATProto.PDS.Storage.InMemory` now exports `InMemoryBackend` /
-  `newInMemoryBackend` and `InMemoryActorStore`, which implement
-  `ActorStoreBackend` and `ActorStorage` respectively.
-  `InMemoryStore` / `newInMemoryStore` are retained for backward
-  compatibility.
+  `newInMemoryBackend` and `InMemoryActorStore`.  `InMemoryActorStore`
+  implements both `BlockStore` and `RepoStore` (no DID).
 * `ATProto.PDS.Storage.FileSystem` now exports `FileBackend` /
-  `newFileBackend` and `FileActorStore`, which implement
-  `ActorStoreBackend` and `ActorStorage` respectively.  Each actor's
-  blocks are stored under `blocks/<sanitised-did>/` for physical isolation.
-  `FileStore` / `newFileStore` are retained for backward compatibility.
-* Updated `ATProto.PDS` re-export module to include `ActorStore`,
-  `ActorStoreBackend`, and the new backend types.
+  `newFileBackend` and `FileActorStore`.  `FileActorStore` implements both
+  `BlockStore` and `RepoStore` (no DID).  Each actor's blocks are stored
+  under `blocks/<sanitised-did>/` for physical isolation.
+* Updated `ATProto.PDS` re-export module to include the new `ActorStore`
+  module and backends.
 * Updated Haddock comments throughout to reflect the new design.
 
 ## 0.1.0.0 -- 2026-03-26
