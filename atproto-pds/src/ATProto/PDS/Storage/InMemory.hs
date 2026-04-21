@@ -80,3 +80,5 @@ instance ActorStoreBackend InMemoryBackend where
         s <- InMemoryActorStore <$> newIORef Map.empty <*> newIORef Nothing
         modifyIORef' (imbActors b) (Map.insert did s)
         return (ActorStore did s)
+
+  closeActorStore _ _ = pure ()

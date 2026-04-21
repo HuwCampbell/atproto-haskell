@@ -37,7 +37,7 @@ class BlockStore s where
 -- is scoped to.  There is no DID parameter: the store is already
 -- implicitly scoped to a single actor by
 -- 'ATProto.PDS.ActorStore.openActorStore'.
-class RepoStore s where
+class BlockStore s => RepoStore s where
   -- | Get the head commit CID, or 'Nothing' if the repository has not
   --   been initialised.
   getRepoHead :: s -> IO (Maybe CidBytes)

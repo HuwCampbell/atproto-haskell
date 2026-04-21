@@ -118,6 +118,8 @@ instance ActorStoreBackend FileBackend where
     createDirectoryIfMissing True bd
     return (ActorStore did (FileActorStore bd hf))
 
+  closeActorStore _ _ = pure ()
+
 -- ---------------------------------------------------------------------------
 -- Internal helpers
 -- ---------------------------------------------------------------------------

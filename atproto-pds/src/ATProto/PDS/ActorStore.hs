@@ -1,4 +1,5 @@
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE FlexibleContexts #-}
 -- | DID-scoped actor store abstraction.
 --
 -- This module provides:
@@ -37,7 +38,7 @@ module ATProto.PDS.ActorStore
 
 import Control.Exception   (bracket)
 import ATProto.Syntax.DID  (DID)
-import ATProto.PDS.Storage (BlockStore, RepoStore)
+import ATProto.PDS.Storage (RepoStore)
 
 -- | A handle to per-actor storage, bundling the DID with its scoped store.
 --
@@ -66,9 +67,7 @@ data ActorStore s = ActorStore
 -- in-memory and file-system ones) that hold no closeable resources.
 -- Override it for backends that do hold resources (e.g. SQLite), so that
 -- 'withActorStore' can release them even when an exception is raised.
-class ( BlockStore (ActorStorageOf b)
-      , RepoStore  (ActorStorageOf b)
-      ) => ActorStoreBackend b where
+class (RepoStore  (ActorStorageOf b)) => ActorStoreBackend b where
   -- | The concrete storage type produced by this backend.
   type ActorStorageOf b :: *
 
@@ -89,7 +88,7 @@ class ( BlockStore (ActorStorageOf b)
   -- This is called by 'withActorStore' in its cleanup phase, so it runs
   -- even when the action raises an exception.
   closeActorStore :: b -> ActorStore (ActorStorageOf b) -> IO ()
-  closeActorStore _ _ = return ()
+
 
 -- | Open a scoped store for @did@, run @action@, close the store, and
 -- return the result.
