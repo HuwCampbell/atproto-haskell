@@ -106,10 +106,6 @@ data RecordOp = RecordOp
 -- ---------------------------------------------------------------------------
 
 -- | Deserialise an MST from a 'BlockMap', starting from the given root CID.
---
--- Each subtree CID in the loaded node triggers a recursive call; GHC's lazy
--- evaluation means sub-calls are thunks until the subtree is actually
--- traversed.
 fromBlockMap :: BlockMap -> CidBytes -> Either MstError MST
 fromBlockMap bmap cid = do
   raw      <- maybe (Left (MstNodeNotFound (cidToText cid)))
