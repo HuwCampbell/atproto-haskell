@@ -26,9 +26,9 @@ import qualified Data.Text            as T
 import qualified Codec.CBOR.Encoding  as E
 import qualified Codec.CBOR.Write     as W
 
-import ATProto.Car.Cid     (CidBytes, cidForDagCbor)
+import ATProto.Car.Cid      (CidBytes, cidForDagCbor)
 import ATProto.Car.DagCbor  (encodeCidTag42, encodeNullableCidTag42)
-import ATProto.Crypto.EC   (sign)
+import ATProto.Crypto.EC    (sign)
 import ATProto.Crypto.Types (PrivKey, Signature (..))
 
 -- ---------------------------------------------------------------------------

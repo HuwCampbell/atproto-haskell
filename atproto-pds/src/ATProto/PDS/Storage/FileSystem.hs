@@ -32,16 +32,20 @@ module ATProto.PDS.Storage.FileSystem
   , FileActorStore
   ) where
 
+import           Control.Monad   (when)
+import           Control.Monad.IO.Class (liftIO)
 import qualified Data.ByteString as BS
 import qualified Data.Text       as T
 
-import System.Directory  (createDirectoryIfMissing, doesFileExist)
-import System.FilePath   ((</>))
+import qualified Streaming.ByteString as Streaming
+import           System.Directory  (createDirectoryIfMissing, doesFileExist, renameFile, removeFile)
+import           System.FilePath   ((</>))
+import           System.Random     (newStdGen, randomRs)
 
-import ATProto.Car.Cid     (CidBytes, cidToText, textToCidBytes)
-import ATProto.Syntax.DID  (DID, unDID)
-import ATProto.PDS.Storage (BlockStore (..), RepoStore (..))
-import ATProto.PDS.ActorStore (ActorStore (..), ActorStoreBackend (..))
+import           ATProto.Car.Cid     (cidToText, textToCidBytes)
+import           ATProto.Syntax.DID  (DID, unDID)
+import           ATProto.PDS.Storage (BlockStore (..), RepoStore (..), BlobStore (..))
+import           ATProto.PDS.ActorStore (ActorStore (..), ActorStoreBackend (..))
 
 -- ---------------------------------------------------------------------------
 -- Per-actor store
@@ -54,12 +58,16 @@ import ATProto.PDS.ActorStore (ActorStore (..), ActorStoreBackend (..))
 data FileActorStore = FileActorStore
   { fasBlockDir :: FilePath
     -- ^ Directory for this actor's block files.
+  , fasTempDir :: FilePath
+    -- ^ Directory for this actor's block files.
+  , fasBlobsDir :: FilePath
+    -- ^ Directory for this actor's block files.
   , fasHeadFile :: FilePath
     -- ^ Path to this actor's head pointer file.
   }
 
 instance BlockStore FileActorStore where
-  getBlock s cid = do
+  getBlock s cid = liftIO $ do
     let path = fasBlockDir s </> T.unpack (cidToText cid)
     exists <- doesFileExist path
     if exists
@@ -67,12 +75,13 @@ instance BlockStore FileActorStore where
       else return Nothing
 
   putBlock s cid bs =
-    BS.writeFile (fasBlockDir s </> T.unpack (cidToText cid)) bs
+    liftIO $
+      BS.writeFile (fasBlockDir s </> T.unpack (cidToText cid)) bs
 
 -- | The 'RepoStore' instance has no DID parameter; this store is already
 --   scoped to a single actor by 'FileBackend'.
 instance RepoStore FileActorStore where
-  getRepoHead s = do
+  getRepoHead s = liftIO $ do
     let path = fasHeadFile s
     exists <- doesFileExist path
     if exists
@@ -84,7 +93,38 @@ instance RepoStore FileActorStore where
       else return Nothing
 
   setRepoHead s cid =
-    writeFile (fasHeadFile s) (T.unpack (cidToText cid))
+    liftIO $
+      writeFile (fasHeadFile s) (T.unpack (cidToText cid))
+
+
+instance BlobStore FileActorStore where
+  type TempKey FileActorStore = FilePath
+
+  putTemp store stream = do
+    stdGen      <- liftIO newStdGen
+    let tempKey  = take 12 (randomRs ('a', 'z') stdGen)
+    res         <- Streaming.writeFile (fasTempDir store </> tempKey) stream
+    pure (tempKey, res)
+
+  makePermanent store tempKey cid = liftIO $ do
+    exists <- doesFileExist (fasTempDir store </> tempKey)
+    when exists $
+      renameFile (fasTempDir store </> tempKey)
+                 (fasBlobsDir store </> T.unpack (cidToText cid))
+
+    return exists
+
+  streamBytes store cid = do
+    let path = fasBlobsDir store </> T.unpack (cidToText cid)
+    Streaming.readFile path
+
+  delete store cid = liftIO $ do
+    let path = fasBlobsDir store </> T.unpack (cidToText cid)
+    exists <- doesFileExist path
+    when exists $
+      removeFile path
+
+    return exists
 
 -- ---------------------------------------------------------------------------
 -- Backend (factory)
@@ -94,7 +134,7 @@ instance RepoStore FileActorStore where
 --
 -- Each actor's blocks are stored under @\<basedir\>\/blocks\/\<sanitised-did\>\/@
 -- and its head pointer at @\<basedir\>\/heads\/\<sanitised-did\>@.
-data FileBackend = FileBackend
+newtype FileBackend = FileBackend
   { fbBaseDir :: FilePath
     -- ^ Root directory for the backend.
   }
@@ -105,18 +145,21 @@ data FileBackend = FileBackend
 -- already exist.
 newFileBackend :: FilePath -> IO FileBackend
 newFileBackend basedir = do
-  createDirectoryIfMissing True (basedir </> "blocks")
-  createDirectoryIfMissing True (basedir </> "heads")
+  createDirectoryIfMissing True basedir
   return (FileBackend basedir)
 
 instance ActorStoreBackend FileBackend where
   type ActorStorageOf FileBackend = FileActorStore
 
   openActorStore b did = do
-    let bd = fbBaseDir b </> "blocks" </> sanitiseDID did
-        hf = fbBaseDir b </> "heads"  </> sanitiseDID did
+    let bd = fbBaseDir b </> sanitiseDID did </> "blocks"
+        td = fbBaseDir b </> sanitiseDID did </> "temps"
+        bs = fbBaseDir b </> sanitiseDID did </> "blobs"
+        hf = fbBaseDir b </> sanitiseDID did </> "heads"
     createDirectoryIfMissing True bd
-    return (ActorStore did (FileActorStore bd hf))
+    createDirectoryIfMissing True td
+    createDirectoryIfMissing True bs
+    return (ActorStore did (FileActorStore bd td bs hf))
 
   closeActorStore _ _ = pure ()
 

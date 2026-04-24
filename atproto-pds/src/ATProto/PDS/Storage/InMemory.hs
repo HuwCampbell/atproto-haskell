@@ -30,6 +30,7 @@ import ATProto.Car.Cid        (CidBytes)
 import ATProto.Syntax.DID     (DID)
 import ATProto.PDS.Storage    (BlockStore (..), RepoStore (..))
 import ATProto.PDS.ActorStore (ActorStore (..), ActorStoreBackend (..))
+import Control.Monad.IO.Class (MonadIO(..))
 
 -- ---------------------------------------------------------------------------
 -- Per-actor store
@@ -45,14 +46,14 @@ data InMemoryActorStore = InMemoryActorStore
   }
 
 instance BlockStore InMemoryActorStore where
-  getBlock s cid    = Map.lookup cid <$> readIORef (imasBlocks s)
-  putBlock s cid bs = modifyIORef' (imasBlocks s) (Map.insert cid bs)
+  getBlock s cid    = liftIO $ Map.lookup cid <$> readIORef (imasBlocks s)
+  putBlock s cid bs = liftIO $ modifyIORef' (imasBlocks s) (Map.insert cid bs)
 
 -- | The 'RepoStore' instance has no DID parameter; this store is already
 --   scoped to a single actor by 'InMemoryBackend'.
 instance RepoStore InMemoryActorStore where
-  getRepoHead s     = readIORef (imasHead s)
-  setRepoHead s cid = writeIORef (imasHead s) (Just cid)
+  getRepoHead s     = liftIO $ readIORef (imasHead s)
+  setRepoHead s cid = liftIO $ writeIORef (imasHead s) (Just cid)
 
 -- ---------------------------------------------------------------------------
 -- Backend (factory)
@@ -61,7 +62,7 @@ instance RepoStore InMemoryActorStore where
 -- | A global in-memory backend that manages one 'InMemoryActorStore' per DID.
 --
 -- Opening the same DID twice returns the same underlying store.
-data InMemoryBackend = InMemoryBackend
+newtype InMemoryBackend = InMemoryBackend
   { imbActors :: IORef (Map.Map DID InMemoryActorStore)
   }
 
