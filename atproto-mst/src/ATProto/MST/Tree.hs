@@ -47,7 +47,6 @@ module ATProto.MST.Tree
   , nextSibling
   , prevSibling
   , up
-  , reverseOnto
   , firstLeaf
   , nextLeaf
   ) where
@@ -77,7 +76,7 @@ import ATProto.MST.Types    (MstError (..))
 -- The 'mstCid' is always computed bottom-up on construction via
 -- 'fromBlockMap' or 'fromList' — it is a pure memo, never stored state.
 data MST = MST
-  { mstCid     :: CidBytes    -- ^ memoised CID (hash of this node's CBOR)
+  { mstCid     :: CidBytes    -- ^ CID
   , mstEntries :: [NodeEntry] -- ^ ordered children
   } deriving (Eq, Show)
 
@@ -375,54 +374,51 @@ verifyProofs mst = mapM_ checkOp
 --
 -- If @key@ is absent the tree is returned unchanged.
 delete :: T.Text -> MST -> MST
-delete key mst = makeMST (deleteEntries key (mstEntries mst))
+delete key (MST _ entries) =
+  trimTop . makeMST $
+    go entries
 
--- | Recursively delete a key from a flat entry list.
---
--- Three cases arise for the leaf being deleted:
---
---  (1) @SubTree l, Leaf key, SubTree r@ — the leaf was flanked by two
---      subtrees; merge them back into one.
---  (2) @SubTree l, Leaf key@ or @Leaf key, SubTree r@ — one flanking
---      subtree; keep it in place.
---  (3) @Leaf key@ alone — simply remove it.
---
--- When descending into a subtree the result is cleaned up: a subtree
--- that has become empty after deletion is removed from the parent.
-deleteEntries :: T.Text -> [NodeEntry] -> [NodeEntry]
-deleteEntries key = go
   where
     go [] = []
 
-    -- Leaf (no preceding subtree): found or scanned past.
+    -- Leaf without a subtree to the left.
     go (Leaf k v : rest)
-      | k == key  = case rest of
-                      SubTree r : rest' -> SubTree r : rest'
-                      _                 -> rest
+      | k == key  = rest
       | k >  key  = Leaf k v : rest
       | otherwise = Leaf k v : go rest
 
     -- SubTree immediately before a leaf.
+    -- This case will merge adjacent subtrees if a leaf
+    -- is removed from the middle.
     go (SubTree l : Leaf k v : rest)
       | k == key  = case rest of
                       SubTree r : rest' ->
-                        case mergeSubtrees l r of
-                          Nothing   -> rest'
-                          Just mrgd -> SubTree mrgd : rest'
+                        let merged = mergeSubtrees l r
+                        in SubTree merged : rest'
                       _ -> SubTree l : rest
-      | key < k   = let l' = delete key l
-                    in if null (mstEntries l')
-                         then Leaf k v : rest
-                         else SubTree l' : Leaf k v : rest
+
+      | key < k   = let l' = go (mstEntries l) in
+                    if null l' then
+                      Leaf k v : rest
+                    else
+                      SubTree (makeMST l') : Leaf k v : rest
+
       | otherwise = SubTree l : Leaf k v : go rest
 
-    -- Trailing subtree with no following leaf at this level.
-    go [SubTree sub] =
-      let sub' = delete key sub
-      in if null (mstEntries sub') then [] else [SubTree sub']
+    -- Trailing subtree.
+    go [SubTree (MST _ sub)] =
+      let sub' = go sub
+      in [SubTree (makeMST sub') | not (null sub')]
 
-    -- Consecutive subtrees should not arise in a valid MST; skip defensively.
+    -- Consecutive subtrees should not arise in a valid MST.
+    -- Skip defensively.
     go (SubTree sub : rest) = SubTree sub : go rest
+
+    -- Trim the topmost nodes if they only point to single subtree.
+    trimTop (MST _ [SubTree next]) =
+      trimTop next
+    trimTop other = other
+
 
 -- | Insert or replace a key-value pair in the MST.
 --
@@ -675,12 +671,12 @@ nextLeaf z = case nextSibling z of
 -- | Merge two MSTs (at the same layer) into one.
 --
 -- Combines all leaves from @l@ (all strictly less than those of @r@) with
--- those of @r@ and rebuilds a canonical MST at the same layer.  Returns
--- 'Nothing' when both subtrees are empty.
-mergeSubtrees :: MST -> MST -> Maybe MST
-mergeSubtrees l r =
-  let combined    = toList l ++ toList r
-      targetLayer = nodeLayer l
-  in case NE.nonEmpty combined of
-       Nothing -> Nothing
-       Just ne -> Just (wrapToLayer targetLayer (fromNonEmpty ne))
+-- those of @r@ and rebuilds a canonical MST at the same layer.
+mergeSubtrees :: MST -> MST -> MST
+mergeSubtrees (MST _ left) (MST _ right) =
+  case (reverse left, right) of
+    (SubTree l: ls, SubTree r : rs) ->
+      let newMiddle = mergeSubtrees l r
+      in makeMST (reverseOnto (SubTree newMiddle : rs) ls)
+    (ls, rs) ->
+      makeMST (reverseOnto rs ls)
