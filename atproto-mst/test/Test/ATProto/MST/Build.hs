@@ -284,6 +284,72 @@ prop_insertIdempotent = property $ do
   lookup key mst' === Just val2
 
 -- ---------------------------------------------------------------------------
+-- Properties: delete
+-- ---------------------------------------------------------------------------
+
+-- Oracle: what should delete give us?
+deleteSorted :: T.Text -> [(T.Text, CidBytes)] -> [(T.Text, CidBytes)]
+deleteSorted k entries = filter ((/= k) . fst) entries
+
+-- | 'delete' then 'lookup' returns Nothing for the deleted key.
+prop_deleteLookup :: Property
+prop_deleteLookup = property $ do
+  entries <- forAll genSomeEntries
+  let mst = fromNonEmpty entries
+  -- Pick a key that is definitely in the tree.
+  (key, _) <- forAll (Gen.element (NE.toList entries))
+  lookup key (delete key mst) === Nothing
+
+-- | 'delete' on a non-empty tree leaves all OTHER keys unchanged.
+prop_deletePreservesOthers :: Property
+prop_deletePreservesOthers = property $ do
+  entries <- forAll genSomeEntries
+  let mst = fromNonEmpty entries
+  (key, _) <- forAll (Gen.element (NE.toList entries))
+  let mst'   = delete key mst
+      others = NE.filter (\(k, _) -> k /= key) entries
+  mapM_ (\(k, v) -> lookup k mst' === Just v) others
+
+-- | 'delete' matches the naive oracle: toList . delete k
+--   == deleteSorted k . toList.
+prop_deleteOracleRoundTrip :: Property
+prop_deleteOracleRoundTrip = property $ do
+  entries <- forAll genEntries
+  key     <- forAll genMstKey
+  let expected = deleteSorted key entries
+  case fromList entries of
+    Nothing  -> entries === []
+    Just mst -> toList (delete key mst) === expected
+
+-- | Inserting a fresh key then deleting it restores the original tree
+--   (same root CID).
+prop_deleteInsertIdentity :: Property
+prop_deleteInsertIdentity = property $ do
+  entries <- forAll genEntries
+  key     <- forAll genMstKey
+  val     <- forAll genCidBytes
+  -- Ensure the key is NOT already present.
+  let entries' = filter ((/= key) . fst) entries
+  case fromList entries' of
+    Nothing ->
+      -- Empty initial tree: insert then delete should give an empty tree.
+      toList (delete key (singleton key val)) === []
+    Just mst ->
+      mstCid (delete key (insert key val mst)) === mstCid mst
+
+-- | 'delete' is idempotent: deleting the same key twice gives the same result
+--   as deleting it once.
+prop_deleteIdempotent :: Property
+prop_deleteIdempotent = property $ do
+  entries <- forAll genSomeEntries
+  key     <- forAll genMstKey
+  let mst   = fromNonEmpty entries
+      mst'  = delete key mst
+      mst'' = delete key mst'
+  mstCid mst'' === mstCid mst'
+  toList mst'' === toList mst'
+
+-- ---------------------------------------------------------------------------
 -- Group
 -- ---------------------------------------------------------------------------
 
@@ -301,4 +367,9 @@ tests = Group "ATProto.MST.Build"
   , ("insert one-by-one matches fromList",      prop_insertMatchesFromList)
   , ("insert matches oracle toList",            prop_insertOracleRoundTrip)
   , ("double insert keeps last value",          prop_insertIdempotent)
+  , ("delete then lookup returns Nothing",      prop_deleteLookup)
+  , ("delete preserves other keys",             prop_deletePreservesOthers)
+  , ("delete matches oracle toList",            prop_deleteOracleRoundTrip)
+  , ("insert fresh key then delete = identity", prop_deleteInsertIdentity)
+  , ("delete is idempotent",                    prop_deleteIdempotent)
   ]
