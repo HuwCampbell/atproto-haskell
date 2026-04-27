@@ -619,14 +619,14 @@ prevSibling (MSTZipper focus (Crumb (l:lefts) rights : crumbs)) =
 prevSibling _ = Nothing
 
 -- | Go back to the parent, recomputing the parent node's CID.
-up :: MSTZipper -> MSTZipper
-up (MSTZipper _ []) = error "ATProto.MST.Tree.up: already at root"
+up :: MSTZipper -> Maybe MSTZipper
+up (MSTZipper _ []) = Nothing
 up (MSTZipper focus (Crumb lefts rights : crumbs)) =
   let newEntries = reverseOnto (focus : rights) lefts
       newMST     = makeMST newEntries
-  in MSTZipper (SubTree newMST) crumbs
+  in Just $ MSTZipper (SubTree newMST) crumbs
 
--- | @reverseOnto tail xs@ = @reverse xs ++ tail@.
+-- | @reverseOnto tail xs@ = @reverse xs <> tail@.
 --
 -- Used by 'up' to reconstruct the parent's entry list from the stored
 -- (reversed) left context and the right context.
@@ -640,9 +640,8 @@ reverseOnto = foldl' (flip (:))
 -- 'SubTree', the zipper descends into the first entry and recurses.
 -- Returns 'Nothing' for an empty subtree.
 firstLeaf :: MSTZipper -> Maybe MSTZipper
-firstLeaf z@(MSTZipper (Leaf _ _) _)        = Just z
-firstLeaf   (MSTZipper (SubTree (MST _ [])) _) = Nothing
-firstLeaf z@(MSTZipper (SubTree _) _)        = down 0 z >>= firstLeaf
+firstLeaf z@(MSTZipper (Leaf _ _) _)  = Just z
+firstLeaf z@(MSTZipper (SubTree _) _) = down 0 z >>= firstLeaf
 
 -- | Advance the zipper to the next leaf in in-order (sorted-key) traversal.
 --
@@ -660,9 +659,7 @@ nextLeaf z = case nextSibling z of
     Leaf _ _  -> Just z'
     SubTree _ -> firstLeaf z'
   Nothing ->
-    case zBreadcrumbs z of
-      [] -> Nothing
-      _  -> nextLeaf (up z)
+    up z >>= nextLeaf
 
 -- ---------------------------------------------------------------------------
 -- Shared helper (used by both delete and the zipper)
@@ -675,7 +672,7 @@ nextLeaf z = case nextSibling z of
 mergeSubtrees :: MST -> MST -> MST
 mergeSubtrees (MST _ left) (MST _ right) =
   case (reverse left, right) of
-    (SubTree l: ls, SubTree r : rs) ->
+    (SubTree l : ls, SubTree r : rs) ->
       let newMiddle = mergeSubtrees l r
       in makeMST (reverseOnto (SubTree newMiddle : rs) ls)
     (ls, rs) ->
