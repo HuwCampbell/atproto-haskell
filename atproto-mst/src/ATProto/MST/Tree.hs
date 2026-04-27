@@ -48,6 +48,8 @@ module ATProto.MST.Tree
   , prevSibling
   , up
   , reverseOnto
+  , firstLeaf
+  , nextLeaf
   ) where
 
 import Prelude hiding (lookup)
@@ -372,18 +374,55 @@ verifyProofs mst = mapM_ checkOp
 -- freshly-computed root CID.
 --
 -- If @key@ is absent the tree is returned unchanged.
---
--- The implementation navigates to the leaf via the zipper so that the
--- merge-and-rebuild path is driven bottom-up without rebuilding nodes that
--- were not affected.
 delete :: T.Text -> MST -> MST
-delete key mst =
-  let z = MSTZipper (SubTree mst) []
-  in case deleteLeafZ key z of
-       Nothing -> mst
-       Just z' -> case zFocus (rebuildToRoot z') of
-                    SubTree mst' -> mst'
-                    _            -> mst   -- cannot happen
+delete key mst = makeMST (deleteEntries key (mstEntries mst))
+
+-- | Recursively delete a key from a flat entry list.
+--
+-- Three cases arise for the leaf being deleted:
+--
+--  (1) @SubTree l, Leaf key, SubTree r@ — the leaf was flanked by two
+--      subtrees; merge them back into one.
+--  (2) @SubTree l, Leaf key@ or @Leaf key, SubTree r@ — one flanking
+--      subtree; keep it in place.
+--  (3) @Leaf key@ alone — simply remove it.
+--
+-- When descending into a subtree the result is cleaned up: a subtree
+-- that has become empty after deletion is removed from the parent.
+deleteEntries :: T.Text -> [NodeEntry] -> [NodeEntry]
+deleteEntries key = go
+  where
+    go [] = []
+
+    -- Leaf (no preceding subtree): found or scanned past.
+    go (Leaf k v : rest)
+      | k == key  = case rest of
+                      SubTree r : rest' -> SubTree r : rest'
+                      _                 -> rest
+      | k >  key  = Leaf k v : rest
+      | otherwise = Leaf k v : go rest
+
+    -- SubTree immediately before a leaf.
+    go (SubTree l : Leaf k v : rest)
+      | k == key  = case rest of
+                      SubTree r : rest' ->
+                        case mergeSubtrees l r of
+                          Nothing   -> rest'
+                          Just mrgd -> SubTree mrgd : rest'
+                      _ -> SubTree l : rest
+      | key < k   = let l' = delete key l
+                    in if null (mstEntries l')
+                         then Leaf k v : rest
+                         else SubTree l' : Leaf k v : rest
+      | otherwise = SubTree l : Leaf k v : go rest
+
+    -- Trailing subtree with no following leaf at this level.
+    go [SubTree sub] =
+      let sub' = delete key sub
+      in if null (mstEntries sub') then [] else [SubTree sub']
+
+    -- Consecutive subtrees should not arise in a valid MST; skip defensively.
+    go (SubTree sub : rest) = SubTree sub : go rest
 
 -- | Insert or replace a key-value pair in the MST.
 --
@@ -541,6 +580,10 @@ mapLeft _ (Right x) = Right x
 -- ---------------------------------------------------------------------------
 
 -- | A zipper focused on a position in the MST.
+--
+-- The zipper is useful for traversals that need O(1) sibling movement and
+-- precise positional context — most notably computing diffs between two
+-- trees by co-iterating their leaves in sorted order.
 data MSTZipper = MSTZipper
   { zFocus       :: NodeEntry
   , zBreadcrumbs :: [Crumb]
@@ -565,14 +608,14 @@ down idx (MSTZipper (SubTree (MST _ entries)) crumbs) =
     _ -> Nothing
 down _ _ = Nothing
 
--- | Move to the next sibling (O(1)).
+-- | Move to the next sibling entry at the current level (O(1)).
 nextSibling :: MSTZipper -> Maybe MSTZipper
 nextSibling (MSTZipper focus (Crumb lefts (r:rights) : crumbs)) =
   let newCrumb = Crumb (focus : lefts) rights
   in Just (MSTZipper r (newCrumb : crumbs))
 nextSibling _ = Nothing
 
--- | Move to the previous sibling (O(1)).
+-- | Move to the previous sibling entry at the current level (O(1)).
 prevSibling :: MSTZipper -> Maybe MSTZipper
 prevSibling (MSTZipper focus (Crumb (l:lefts) rights : crumbs)) =
   let newCrumb = Crumb lefts (focus : rights)
@@ -594,66 +637,45 @@ up (MSTZipper focus (Crumb lefts rights : crumbs)) =
 reverseOnto :: [a] -> [a] -> [a]
 reverseOnto = foldl' (flip (:))
 
--- ---------------------------------------------------------------------------
--- Delete internals (zipper-based)
--- ---------------------------------------------------------------------------
-
--- | Navigate to and delete the leaf with key @key@ starting from a
--- 'SubTree'-focused zipper.  Returns 'Nothing' when @key@ is absent.
-deleteLeafZ :: T.Text -> MSTZipper -> Maybe MSTZipper
-deleteLeafZ key z@(MSTZipper (SubTree (MST _ entries)) _) =
-  searchEntries key z 0 entries
-deleteLeafZ _ _ = Nothing
-
--- | Linear scan through the entry list, descending into subtrees as needed.
-searchEntries :: T.Text -> MSTZipper -> Int -> [NodeEntry] -> Maybe MSTZipper
-searchEntries _ _ _ [] = Nothing
-searchEntries key z idx (Leaf k _ : _)
-  | k == key  = fmap removeAndCleanup (down idx z)
-  | k >  key  = Nothing                           -- past insertion point
-searchEntries key z idx (Leaf _ _ : rest) =
-  searchEntries key z (idx + 1) rest
-searchEntries key z idx (SubTree _ : rest) =
-  case firstLeafKey rest of
-    Just nk | key >= nk ->
-      -- Key is at or to the right of the next leaf; skip this subtree.
-      searchEntries key z (idx + 1) rest
-    _ ->
-      -- Key may live inside this subtree; descend.
-      case down idx z of
-        Nothing -> Nothing
-        Just z' -> deleteLeafZ key z'
-
--- | Remove the focused leaf and, if both its immediate neighbours are
--- 'SubTree's, merge them.  Then clean up any empty 'SubTree' spine nodes
--- that result from the merge.
+-- | Move the zipper to the first (leftmost) leaf reachable from the current
+-- focus.
 --
--- Precondition: focus is a 'Leaf' with at least one breadcrumb.
-removeAndCleanup :: MSTZipper -> MSTZipper
-removeAndCleanup (MSTZipper (Leaf _ _) (Crumb lefts rights : crumbs)) =
-  let newEntries = case (lefts, rights) of
-        (SubTree l : lefts', SubTree r : rights') ->
-          case mergeSubtrees l r of
-            Nothing   -> reverseOnto rights' lefts'
-            Just mrgd -> reverseOnto (SubTree mrgd : rights') lefts'
-        _ -> reverseOnto rights lefts
-      newMST = makeMST newEntries
-  in cleanupEmptySubTree (MSTZipper (SubTree newMST) crumbs)
-removeAndCleanup z = z
+-- If the focus is already a 'Leaf', it is returned as-is.  If it is a
+-- 'SubTree', the zipper descends into the first entry and recurses.
+-- Returns 'Nothing' for an empty subtree.
+firstLeaf :: MSTZipper -> Maybe MSTZipper
+firstLeaf z@(MSTZipper (Leaf _ _) _)        = Just z
+firstLeaf   (MSTZipper (SubTree (MST _ [])) _) = Nothing
+firstLeaf z@(MSTZipper (SubTree _) _)        = down 0 z >>= firstLeaf
 
--- | If the focus is an empty 'SubTree', remove it from its parent and
--- recurse upward until either the focus is non-empty or we reach the root.
-cleanupEmptySubTree :: MSTZipper -> MSTZipper
-cleanupEmptySubTree (MSTZipper (SubTree (MST _ [])) (Crumb lefts rights : crumbs)) =
-  let newEntries = reverseOnto rights lefts
-      newMST     = makeMST newEntries
-  in cleanupEmptySubTree (MSTZipper (SubTree newMST) crumbs)
-cleanupEmptySubTree z = z
-
--- | Merge two MSTs (assumed to be at the same layer) into a single MST.
+-- | Advance the zipper to the next leaf in in-order (sorted-key) traversal.
 --
--- All leaves from @l@ (which are all strictly less than those of @r@) are
--- combined with those of @r@ and rebuilt at the same layer.  Returns
+-- The algorithm is:
+--
+--  1. Move to the next sibling.
+--  2. If the sibling is a 'Leaf', we are done.
+--  3. If the sibling is a 'SubTree', descend to its first leaf.
+--  4. If there is no next sibling, go up one level and repeat.
+--  5. When the root is reached with no next sibling, the traversal is
+--     exhausted.
+nextLeaf :: MSTZipper -> Maybe MSTZipper
+nextLeaf z = case nextSibling z of
+  Just z' -> case zFocus z' of
+    Leaf _ _  -> Just z'
+    SubTree _ -> firstLeaf z'
+  Nothing ->
+    case zBreadcrumbs z of
+      [] -> Nothing
+      _  -> nextLeaf (up z)
+
+-- ---------------------------------------------------------------------------
+-- Shared helper (used by both delete and the zipper)
+-- ---------------------------------------------------------------------------
+
+-- | Merge two MSTs (at the same layer) into one.
+--
+-- Combines all leaves from @l@ (all strictly less than those of @r@) with
+-- those of @r@ and rebuilds a canonical MST at the same layer.  Returns
 -- 'Nothing' when both subtrees are empty.
 mergeSubtrees :: MST -> MST -> Maybe MST
 mergeSubtrees l r =
@@ -662,8 +684,3 @@ mergeSubtrees l r =
   in case NE.nonEmpty combined of
        Nothing -> Nothing
        Just ne -> Just (wrapToLayer targetLayer (fromNonEmpty ne))
-
--- | Rebuild from the current zipper position all the way back to the root.
-rebuildToRoot :: MSTZipper -> MSTZipper
-rebuildToRoot z@(MSTZipper _ []) = z
-rebuildToRoot z                  = rebuildToRoot (up z)
