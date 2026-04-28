@@ -374,19 +374,16 @@ computeDiff olds@((ok, ov):ot) news@((nk, nv):nt)
 -- 'Nothing' for the old tree means an empty tree: all leaves in @new@ are
 -- treated as additions.
 --
--- Block tracking uses 'toBlockMap' on both trees to determine which internal
--- MST node blocks are new and which have been orphaned.
+-- Block tracking is done lazily: unchanged subtrees (identified by equal
+-- CIDs) are skipped entirely, and node bytes are serialised only for MST
+-- nodes that are genuinely new.
 zipperDiff :: Maybe MST -> MST -> DataDiff
 zipperDiff mOld new =
-  let oldBlockMap    = maybe Map.empty toBlockMap mOld
-      newBlockMap    = toBlockMap new
-      newBlocks      = Map.difference newBlockMap oldBlockMap
-      removedCids    = Set.fromList (Map.keys (Map.difference oldBlockMap newBlockMap))
-
-      oldStart       = mOld >>= \old -> firstLeaf (MSTZipper (SubTree old) [])
-      newStart       = firstLeaf (MSTZipper (SubTree new) [])
+  let oldStart = mOld >>= \old -> firstLeaf (MSTZipper (SubTree old) [])
+      newStart  = firstLeaf (MSTZipper (SubTree new) [])
 
       (adds, updates, deletes, newLeafCids) = go oldStart newStart
+      (newBlocks, removedCids)              = mstBlockDiff mOld new
 
   in DataDiff
        { ddAdds        = adds
@@ -449,6 +446,66 @@ zipperDiff mOld new =
         _ ->
           -- Unreachable: firstLeaf/nextLeaf always yield a Leaf focus.
           (Map.empty, Map.empty, Map.empty, Set.empty)
+
+-- | Compute new and removed blocks without serialising unchanged nodes.
+--
+-- Strategy:
+--
+--  1. Collect all CIDs from the old tree (no serialisation).
+--  2. Walk the new tree; for each node whose CID is absent from the old set,
+--     serialise it with 'encodeNode' \/ 'toNodeData' and add it to the result.
+--     Subtrees whose root CID is already known are skipped entirely.
+--  3. Collect all CIDs from the new tree (no serialisation).
+--  4. Walk the old tree; collect CIDs absent from the new set.
+--     Subtrees whose root CID is still present are skipped entirely.
+--
+-- This is O(n_old + n_new) in tree-node visits but only
+-- O(changed_nodes) in serialisation cost — a significant win over
+-- calling 'toBlockMap' on both trees for small diffs of large trees.
+-- When the two root CIDs are equal the function short-circuits in O(1).
+mstBlockDiff :: Maybe MST -> MST -> (BlockMap, Set.Set CidBytes)
+mstBlockDiff Nothing new = (mstCollectBlocks new, Set.empty)
+mstBlockDiff (Just old) new
+  | mstCid old == mstCid new = (Map.empty, Set.empty)
+  | otherwise =
+      let oldCids     = mstAllCids old
+          newBlocks   = mstNewBlocksNotIn oldCids new
+          newCids     = mstAllCids new
+          removedCids = mstRemovedCidsNotIn newCids old
+      in (newBlocks, removedCids)
+
+-- | Collect all MST node CIDs in a tree without serialising any of them.
+mstAllCids :: MST -> Set.Set CidBytes
+mstAllCids (MST cid entries) =
+  Set.insert cid (Set.unions [ mstAllCids s | SubTree s <- entries ])
+
+-- | Collect all MST node blocks, serialising only nodes whose CID is
+-- absent from @knownCids@.  Entire subtrees are skipped when their root
+-- CID is already known.
+mstNewBlocksNotIn :: Set.Set CidBytes -> MST -> BlockMap
+mstNewBlocksNotIn knownCids (MST cid entries)
+  | Set.member cid knownCids = Map.empty
+  | otherwise =
+      let bytes = encodeNode (toNodeData entries)
+          subs  = Map.unions [ mstNewBlocksNotIn knownCids s | SubTree s <- entries ]
+      in Map.insert cid bytes subs
+
+-- | Collect all MST node CIDs that are absent from @presentCids@.
+-- Entire subtrees are skipped when their root CID is still present.
+mstRemovedCidsNotIn :: Set.Set CidBytes -> MST -> Set.Set CidBytes
+mstRemovedCidsNotIn presentCids (MST cid entries)
+  | Set.member cid presentCids = Set.empty
+  | otherwise =
+      Set.insert cid
+        (Set.unions [ mstRemovedCidsNotIn presentCids s | SubTree s <- entries ])
+
+-- | Collect all MST node blocks in a tree (used when the old tree is absent).
+mstCollectBlocks :: MST -> BlockMap
+mstCollectBlocks (MST cid entries) =
+  let bytes = encodeNode (toNodeData entries)
+      subs  = Map.unions [ mstCollectBlocks s | SubTree s <- entries ]
+  in Map.insert cid bytes subs
+
 
 -- ---------------------------------------------------------------------------
 -- Proof verification
