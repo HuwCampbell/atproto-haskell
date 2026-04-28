@@ -377,111 +377,89 @@ computeDiff olds@((ok, ov):ot) news@((nk, nv):nt)
 -- Block tracking is done lazily: unchanged subtrees (identified by equal
 -- CIDs) are skipped entirely, and node bytes are serialised only for MST
 -- nodes that are genuinely new.
+--
+-- The leaf co-iteration is a single tail-recursive pass over a 'DataDiff'
+-- accumulator.  The block-level fields ('ddNewBlocks', 'ddRemovedCids') are
+-- pre-computed and placed in the initial accumulator, so the worker 'go' is
+-- the single function that fills every field.
 zipperDiff :: Maybe MST -> MST -> DataDiff
 zipperDiff mOld new =
-  let oldStart = mOld >>= \old -> firstLeaf (MSTZipper (SubTree old) [])
-      newStart  = firstLeaf (MSTZipper (SubTree new) [])
-
-      (adds, updates, deletes, newLeafCids) = go oldStart newStart
-      (newBlocks, removedCids)              = mstBlockDiff mOld new
-
-  in DataDiff
-       { ddAdds        = adds
-       , ddUpdates     = updates
-       , ddDeletes     = deletes
-       , ddNewBlocks   = newBlocks
-       , ddNewLeafCids = newLeafCids
-       , ddRemovedCids = removedCids
-       }
+  let oldCids  = maybe Set.empty mstAllCids mOld
+      newCids  = mstAllCids new
+      initDiff = DataDiff
+        { ddAdds        = Map.empty
+        , ddUpdates     = Map.empty
+        , ddDeletes     = Map.empty
+        , ddNewBlocks   = mstNewBlocksNotIn oldCids new
+        , ddNewLeafCids = Set.empty
+        , ddRemovedCids = maybe Set.empty (mstRemovedCidsNotIn newCids) mOld
+        }
+      oldStart = mOld >>= \old -> firstLeaf (MSTZipper (SubTree old) [])
+      newStart = firstLeaf (MSTZipper (SubTree new) [])
+  in go oldStart newStart initDiff
   where
-    go :: Maybe MSTZipper -> Maybe MSTZipper
-       -> ( Map.Map T.Text CidBytes
-          , Map.Map T.Text (CidBytes, CidBytes)
-          , Map.Map T.Text CidBytes
-          , Set.Set CidBytes
-          )
+    go :: Maybe MSTZipper -> Maybe MSTZipper -> DataDiff -> DataDiff
 
     -- Both exhausted: done.
-    go Nothing Nothing =
-      (Map.empty, Map.empty, Map.empty, Set.empty)
+    go Nothing Nothing acc = acc
 
     -- Old exhausted: all remaining new leaves are additions.
-    go Nothing (Just nz) =
+    go Nothing (Just nz) acc =
       case zFocus nz of
         Leaf nk nv ->
-          let (as, us, ds, lcs) = go Nothing (nextLeaf nz)
-          in (Map.insert nk nv as, us, ds, Set.insert nv lcs)
-        SubTree _ ->
-          (Map.empty, Map.empty, Map.empty, Set.empty) -- unreachable after firstLeaf
+          go Nothing (nextLeaf nz) acc
+            { ddAdds        = Map.insert nk nv (ddAdds acc)
+            , ddNewLeafCids = Set.insert nv (ddNewLeafCids acc)
+            }
+        SubTree _ -> acc  -- unreachable after firstLeaf
 
     -- New exhausted: all remaining old leaves are deletions.
-    go (Just oz) Nothing =
+    go (Just oz) Nothing acc =
       case zFocus oz of
         Leaf ok ov ->
-          let (as, us, ds, lcs) = go (nextLeaf oz) Nothing
-          in (as, us, Map.insert ok ov ds, lcs)
-        SubTree _ ->
-          (Map.empty, Map.empty, Map.empty, Set.empty) -- unreachable after firstLeaf
+          go (nextLeaf oz) Nothing acc
+            { ddDeletes = Map.insert ok ov (ddDeletes acc) }
+        SubTree _ -> acc  -- unreachable after firstLeaf
 
     -- Both active: compare current leaves.
-    go (Just oz) (Just nz) =
+    go (Just oz) (Just nz) acc =
       case (zFocus oz, zFocus nz) of
         (Leaf ok ov, Leaf nk nv)
           | ok == nk && ov == nv ->
               -- Identical: no change; new leaf CID is still live.
-              let (as, us, ds, lcs) = go (nextLeaf oz) (nextLeaf nz)
-              in (as, us, ds, Set.insert nv lcs)
+              go (nextLeaf oz) (nextLeaf nz) acc
+                { ddNewLeafCids = Set.insert nv (ddNewLeafCids acc) }
           | ok == nk ->
               -- Same key, different CID: update.
-              let (as, us, ds, lcs) = go (nextLeaf oz) (nextLeaf nz)
-              in (as, Map.insert ok (ov, nv) us, ds, Set.insert nv lcs)
+              go (nextLeaf oz) (nextLeaf nz) acc
+                { ddUpdates     = Map.insert ok (ov, nv) (ddUpdates acc)
+                , ddNewLeafCids = Set.insert nv (ddNewLeafCids acc)
+                }
           | ok < nk ->
               -- Old key has no counterpart in new: deletion.
-              let (as, us, ds, lcs) = go (nextLeaf oz) (Just nz)
-              in (as, us, Map.insert ok ov ds, lcs)
+              go (nextLeaf oz) (Just nz) acc
+                { ddDeletes = Map.insert ok ov (ddDeletes acc) }
           | otherwise ->
               -- New key has no counterpart in old: addition.
-              let (as, us, ds, lcs) = go (Just oz) (nextLeaf nz)
-              in (Map.insert nk nv as, us, ds, Set.insert nv lcs)
+              go (Just oz) (nextLeaf nz) acc
+                { ddAdds        = Map.insert nk nv (ddAdds acc)
+                , ddNewLeafCids = Set.insert nv (ddNewLeafCids acc)
+                }
         _ ->
           -- Unreachable: firstLeaf/nextLeaf always yield a Leaf focus.
-          (Map.empty, Map.empty, Map.empty, Set.empty)
-
--- | Compute new and removed blocks without serialising unchanged nodes.
---
--- Strategy:
---
---  1. Collect all CIDs from the old tree (no serialisation).
---  2. Walk the new tree; for each node whose CID is absent from the old set,
---     serialise it with 'encodeNode' \/ 'toNodeData' and add it to the result.
---     Subtrees whose root CID is already known are skipped entirely.
---  3. Collect all CIDs from the new tree (no serialisation).
---  4. Walk the old tree; collect CIDs absent from the new set.
---     Subtrees whose root CID is still present are skipped entirely.
---
--- This is O(n_old + n_new) in tree-node visits but only
--- O(changed_nodes) in serialisation cost — a significant win over
--- calling 'toBlockMap' on both trees for small diffs of large trees.
--- When the two root CIDs are equal the function short-circuits in O(1).
-mstBlockDiff :: Maybe MST -> MST -> (BlockMap, Set.Set CidBytes)
-mstBlockDiff Nothing new = (mstCollectBlocks new, Set.empty)
-mstBlockDiff (Just old) new
-  | mstCid old == mstCid new = (Map.empty, Set.empty)
-  | otherwise =
-      let oldCids     = mstAllCids old
-          newBlocks   = mstNewBlocksNotIn oldCids new
-          newCids     = mstAllCids new
-          removedCids = mstRemovedCidsNotIn newCids old
-      in (newBlocks, removedCids)
+          acc
 
 -- | Collect all MST node CIDs in a tree without serialising any of them.
+-- Entire subtrees whose root CID is known to be absent can be short-circuited
+-- by callers; this helper always visits every node.
 mstAllCids :: MST -> Set.Set CidBytes
 mstAllCids (MST cid entries) =
   Set.insert cid (Set.unions [ mstAllCids s | SubTree s <- entries ])
 
 -- | Collect all MST node blocks, serialising only nodes whose CID is
 -- absent from @knownCids@.  Entire subtrees are skipped when their root
--- CID is already known.
+-- CID is already known (content-addressed immutability guarantees all
+-- descendants share the same property).
 mstNewBlocksNotIn :: Set.Set CidBytes -> MST -> BlockMap
 mstNewBlocksNotIn knownCids (MST cid entries)
   | Set.member cid knownCids = Map.empty
@@ -498,13 +476,6 @@ mstRemovedCidsNotIn presentCids (MST cid entries)
   | otherwise =
       Set.insert cid
         (Set.unions [ mstRemovedCidsNotIn presentCids s | SubTree s <- entries ])
-
--- | Collect all MST node blocks in a tree (used when the old tree is absent).
-mstCollectBlocks :: MST -> BlockMap
-mstCollectBlocks (MST cid entries) =
-  let bytes = encodeNode (toNodeData entries)
-      subs  = Map.unions [ mstCollectBlocks s | SubTree s <- entries ]
-  in Map.insert cid bytes subs
 
 
 -- ---------------------------------------------------------------------------
