@@ -22,6 +22,9 @@ module ATProto.MST.Tree
   , NodeEntry (..)
     -- * Write descriptor (for diff)
   , WriteDescr (..)
+    -- * Zipper-based diff
+  , DataDiff (..)
+  , zipperDiff
     -- * Record operation (for proof verification)
   , RecordOp (..)
     -- * BlockMap serialisation
@@ -60,6 +63,7 @@ import qualified Data.ByteString      as BS
 import qualified Data.List.NonEmpty   as NE
 import qualified Data.Map.Strict      as Map
 import           Data.Maybe           (maybeToList)
+import qualified Data.Set             as Set
 import qualified Data.Text            as T
 import qualified Data.Text.Encoding   as TE
 
@@ -102,6 +106,28 @@ data WriteDescr
   | WDelete { wdKey :: T.Text, wdPrev :: CidBytes }
     -- ^ A key present in the old tree but absent from the new tree.
   deriving (Eq, Show)
+
+-- ---------------------------------------------------------------------------
+-- Zipper-based diff result
+-- ---------------------------------------------------------------------------
+
+-- | Structured result of a zipper-based diff between two MST states.
+--
+-- Mirrors the TypeScript @DataDiff@ class in @\@bluesky-social\/atproto@.
+data DataDiff = DataDiff
+  { ddAdds        :: Map.Map T.Text CidBytes
+    -- ^ Leaves present in the new tree but absent from the old tree.
+  , ddUpdates     :: Map.Map T.Text (CidBytes, CidBytes)
+    -- ^ Leaves present in both trees with changed CIDs: key -> (old, new).
+  , ddDeletes     :: Map.Map T.Text CidBytes
+    -- ^ Leaves present in the old tree but absent from the new tree.
+  , ddNewBlocks   :: BlockMap
+    -- ^ New internal MST node blocks (present in new tree, absent from old).
+  , ddNewLeafCids :: Set.Set CidBytes
+    -- ^ Leaf value CIDs referenced by the new tree (records to preserve).
+  , ddRemovedCids :: Set.Set CidBytes
+    -- ^ Internal MST node CIDs present in the old tree but not in the new tree.
+  } deriving (Eq, Show)
 
 -- ---------------------------------------------------------------------------
 -- Record operation (for proof verification)
@@ -341,6 +367,88 @@ computeDiff olds@((ok, ov):ot) news@((nk, nv):nt)
   | ok == nk             = WUpdate ok ov nv : computeDiff ot nt
   | ok <  nk             = WDelete ok ov    : computeDiff ot news
   | otherwise            = WCreate nk nv    : computeDiff olds nt
+
+-- | Compute a structured diff between two MST states using the zipper
+-- interface, co-iterating leaves in sorted order without flattening.
+--
+-- 'Nothing' for the old tree means an empty tree: all leaves in @new@ are
+-- treated as additions.
+--
+-- Block tracking uses 'toBlockMap' on both trees to determine which internal
+-- MST node blocks are new and which have been orphaned.
+zipperDiff :: Maybe MST -> MST -> DataDiff
+zipperDiff mOld new =
+  let oldBlockMap    = maybe Map.empty toBlockMap mOld
+      newBlockMap    = toBlockMap new
+      newBlocks      = Map.difference newBlockMap oldBlockMap
+      removedCids    = Set.fromList (Map.keys (Map.difference oldBlockMap newBlockMap))
+
+      oldStart       = mOld >>= \old -> firstLeaf (MSTZipper (SubTree old) [])
+      newStart       = firstLeaf (MSTZipper (SubTree new) [])
+
+      (adds, updates, deletes, newLeafCids) = go oldStart newStart
+
+  in DataDiff
+       { ddAdds        = adds
+       , ddUpdates     = updates
+       , ddDeletes     = deletes
+       , ddNewBlocks   = newBlocks
+       , ddNewLeafCids = newLeafCids
+       , ddRemovedCids = removedCids
+       }
+  where
+    go :: Maybe MSTZipper -> Maybe MSTZipper
+       -> ( Map.Map T.Text CidBytes
+          , Map.Map T.Text (CidBytes, CidBytes)
+          , Map.Map T.Text CidBytes
+          , Set.Set CidBytes
+          )
+
+    -- Both exhausted: done.
+    go Nothing Nothing =
+      (Map.empty, Map.empty, Map.empty, Set.empty)
+
+    -- Old exhausted: all remaining new leaves are additions.
+    go Nothing (Just nz) =
+      case zFocus nz of
+        Leaf nk nv ->
+          let (as, us, ds, lcs) = go Nothing (nextLeaf nz)
+          in (Map.insert nk nv as, us, ds, Set.insert nv lcs)
+        SubTree _ ->
+          (Map.empty, Map.empty, Map.empty, Set.empty) -- unreachable after firstLeaf
+
+    -- New exhausted: all remaining old leaves are deletions.
+    go (Just oz) Nothing =
+      case zFocus oz of
+        Leaf ok ov ->
+          let (as, us, ds, lcs) = go (nextLeaf oz) Nothing
+          in (as, us, Map.insert ok ov ds, lcs)
+        SubTree _ ->
+          (Map.empty, Map.empty, Map.empty, Set.empty) -- unreachable after firstLeaf
+
+    -- Both active: compare current leaves.
+    go (Just oz) (Just nz) =
+      case (zFocus oz, zFocus nz) of
+        (Leaf ok ov, Leaf nk nv)
+          | ok == nk && ov == nv ->
+              -- Identical: no change; new leaf CID is still live.
+              let (as, us, ds, lcs) = go (nextLeaf oz) (nextLeaf nz)
+              in (as, us, ds, Set.insert nv lcs)
+          | ok == nk ->
+              -- Same key, different CID: update.
+              let (as, us, ds, lcs) = go (nextLeaf oz) (nextLeaf nz)
+              in (as, Map.insert ok (ov, nv) us, ds, Set.insert nv lcs)
+          | ok < nk ->
+              -- Old key has no counterpart in new: deletion.
+              let (as, us, ds, lcs) = go (nextLeaf oz) (Just nz)
+              in (as, us, Map.insert ok ov ds, lcs)
+          | otherwise ->
+              -- New key has no counterpart in old: addition.
+              let (as, us, ds, lcs) = go (Just oz) (nextLeaf nz)
+              in (Map.insert nk nv as, us, ds, Set.insert nv lcs)
+        _ ->
+          -- Unreachable: firstLeaf/nextLeaf always yield a Leaf focus.
+          (Map.empty, Map.empty, Map.empty, Set.empty)
 
 -- ---------------------------------------------------------------------------
 -- Proof verification

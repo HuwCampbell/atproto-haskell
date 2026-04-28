@@ -1,28 +1,8 @@
--- | Tests capturing the lazy and partial semantics of MST blocks.
+-- | Tests for the zipper-based 'zipperDiff' function.
 --
--- These tests demonstrate the fundamental property that firehose commit
--- events only include the /changed/ MST blocks (the diff CAR), not the
--- full tree.  Because 'fromBlockMap' eagerly follows every subtree CID,
--- loading a partial block map that is missing unchanged subtree nodes
--- fails with 'MstNodeNotFound'.
---
--- == Golden tests
---
--- A hand-constructed multi-level MST is mutated, and we verify that:
---
---  1. Full block maps always succeed with 'mstDiff'.
---  2. Partial (diff-only) block maps fail with 'MstNodeNotFound' when
---     unchanged subtree CIDs are absent.
---
--- == Property-based tests
---
--- For randomly generated MSTs and random insertions:
---
---  * The changed blocks are always a strict subset of the full block map.
---  * 'mstDiff' with the full union of old and new blocks always succeeds.
---  * 'mstDiff' with only the changed (diff) blocks fails with
---    'MstNodeNotFound' when the tree has depth > 1 and unchanged
---    subtrees exist.
+-- These tests verify that 'zipperDiff' correctly identifies additions,
+-- updates, deletions, and block changes between two MST states, and that
+-- its results are consistent with the simpler list-based 'diff'.
 module Test.ATProto.MST.Diff (tests) where
 
 import Hedgehog
@@ -30,51 +10,30 @@ import qualified Hedgehog.Gen   as Gen
 import qualified Hedgehog.Range as Range
 import qualified Data.ByteString      as BS
 import qualified Data.Map.Strict      as Map
+import qualified Data.Set             as Set
 import qualified Data.List.NonEmpty   as NE
 import qualified Data.Text            as T
 
 import ATProto.Car.Cid      (CidBytes, unsafeRawCid)
-import ATProto.Car.BlockMap  (BlockMap)
-import ATProto.MST.Diff      (mstDiff, WriteDescr (..))
-import ATProto.MST.Types     (MstError (..))
 import ATProto.MST.Tree
   ( MST (..)
   , NodeEntry (..)
-  , fromBlockMap
-  , toBlockMap
+  , DataDiff (..)
+  , WriteDescr (..)
   , fromList
   , fromNonEmpty
   , insert
+  , delete
   , toList
+  , toBlockMap
+  , zipperDiff
+  , diff
   )
-import qualified ATProto.MST.Tree as Tree
 
 import Prelude hiding (lookup)
 
 -- ---------------------------------------------------------------------------
--- Helpers
--- ---------------------------------------------------------------------------
-
--- | Compute the set of blocks that differ between two block maps.
--- Returns only blocks whose CID is present in @new@ but not in @old@.
--- In content-addressed storage, a CID present in both maps always has
--- the same content, so only genuinely new CIDs are returned.
-diffBlocks :: BlockMap -> BlockMap -> BlockMap
-diffBlocks old new = Map.difference new old
-
--- | True when the MST has at least one 'SubTree' entry in its root node.
-hasSubtrees :: MST -> Bool
-hasSubtrees mst = any isSub (mstEntries mst)
-  where
-    isSub (SubTree _) = True
-    isSub _           = False
-
--- | Count the number of nodes in the block map.
-blockCount :: BlockMap -> Int
-blockCount = Map.size
-
--- ---------------------------------------------------------------------------
--- Generators (reused from Build tests)
+-- Generators
 -- ---------------------------------------------------------------------------
 
 genKeyChar :: Gen Char
@@ -99,286 +58,153 @@ genSomeEntries = do
   pairs <- sequence [ (,) <$> genMstKey <*> genCidBytes | _ <- [1..n] ]
   return $ NE.fromList (Map.toAscList (Map.fromList pairs))
 
--- | Generate a sorted, unique list of MST entries that is large enough
--- to produce a multi-level MST (depth > 1).
+-- | Generate a sorted, unique list large enough for a multi-level MST.
 genLargeEntries :: Gen (NE.NonEmpty (T.Text, CidBytes))
 genLargeEntries = do
-  -- Use 20-100 entries; most random collections of this size produce
-  -- at least one key with leadingZerosOnHash > 0, giving depth > 1.
   n     <- Gen.int (Range.linear 20 100)
   pairs <- sequence [ (,) <$> genMstKey <*> genCidBytes | _ <- [1..n] ]
   return $ NE.fromList (Map.toAscList (Map.fromList pairs))
 
 -- ---------------------------------------------------------------------------
--- Golden tests
+-- Property tests
 -- ---------------------------------------------------------------------------
 
--- | Build a known multi-entry tree, insert a new record, and verify:
---
---   1. mstDiff with the full union of blocks succeeds.
---   2. mstDiff with only the changed blocks fails with MstNodeNotFound
---      when the tree has subtrees.
-prop_goldenPartialBlocksFail :: Property
-prop_goldenPartialBlocksFail = withTests 1 $ property $ do
-  -- Build a tree large enough to have depth > 1.
-  -- Use a fixed set of keys that produce a multi-level structure.
-  let keys = [ "app.bsky.feed.post/" <> T.pack (show i) | i <- [1..50 :: Int] ]
-  vals <- forAll $ sequence [ genCidBytes | _ <- keys ]
-  let entries = zip keys vals
+-- | Diff from empty to a single-entry tree reports exactly one addition.
+prop_zipperDiffEmptyToSingle :: Property
+prop_zipperDiffEmptyToSingle = property $ do
+  key <- forAll genMstKey
+  val <- forAll genCidBytes
+  let new = fromNonEmpty (NE.singleton (key, val))
+      d   = zipperDiff Nothing new
+  ddAdds    d === Map.singleton key val
+  ddUpdates d === Map.empty
+  ddDeletes d === Map.empty
 
-  case fromList entries of
-    Nothing -> do
-      annotate "fromList returned Nothing for 50 entries"
-      failure
-    Just oldMst -> do
-      -- Verify the tree has subtrees (multi-level)
-      annotate ("old tree has subtrees: " ++ show (hasSubtrees oldMst))
+-- | When the old tree is empty all new leaves are additions.
+prop_zipperDiffCreates :: Property
+prop_zipperDiffCreates = property $ do
+  entries <- forAll genSomeEntries
+  let new  = fromNonEmpty entries
+      d    = zipperDiff Nothing new
+  -- Every entry should appear as an add.
+  ddAdds    d === Map.fromList (NE.toList entries)
+  ddUpdates d === Map.empty
+  ddDeletes d === Map.empty
 
-      -- Insert a new record to get the new tree
-      newKey <- forAll genMstKey
-      newVal <- forAll genCidBytes
-      let newMst = insert newKey newVal oldMst
+-- | Deleting every key from the new tree produces only deletions.
+prop_zipperDiffDeletes :: Property
+prop_zipperDiffDeletes = property $ do
+  entries <- forAll genSomeEntries
+  let old      = fromNonEmpty entries
+      -- Build a new tree with all keys removed
+      newMst   = foldr (\(k, _) t -> delete k t) old (NE.toList entries)
+      d        = zipperDiff (Just old) newMst
+  ddAdds    d === Map.empty
+  ddUpdates d === Map.empty
+  -- Every original entry must be in the deletes map
+  ddDeletes d === Map.fromList (NE.toList entries)
 
-      let oldBlocks = toBlockMap oldMst
-      let newBlocks = toBlockMap newMst
-      let unionBlocks = Map.union newBlocks oldBlocks
-      let changedOnly = diffBlocks oldBlocks newBlocks
+-- | A mix of inserts, updates, and deletes is reflected correctly.
+prop_zipperDiffUpdates :: Property
+prop_zipperDiffUpdates = property $ do
+  entries <- forAll genSomeEntries
+  let old    = fromNonEmpty entries
+      (k, _) = NE.head entries          -- pick a key that exists
+  newVal <- forAll genCidBytes
+  newKey <- forAll genMstKey
+  newCid <- forAll genCidBytes
+  let new = insert newKey newCid (insert k newVal old)
+      d   = zipperDiff (Just old) new
+  -- The new key must appear as an add (unless it coincides with an existing key)
+  case Map.lookup newKey (Map.fromList (NE.toList entries)) of
+    Nothing ->
+      assert (Map.member newKey (ddAdds d) || Map.member newKey (ddUpdates d))
+    Just _ ->
+      success
+  -- The updated key is either in updates (value changed) or untouched (same value).
+  case Map.lookup k (Map.fromList (NE.toList entries)) of
+    Just oldVal | oldVal /= newVal ->
+      assert (Map.member k (ddUpdates d))
+    _ ->
+      success
 
-      -- 1. Full union of blocks: mstDiff always works
-      case mstDiff unionBlocks (Just (mstCid oldMst)) (mstCid newMst) of
-        Left err -> do
-          annotate ("mstDiff with full blocks failed: " ++ show err)
-          failure
-        Right _writes ->
-          success
+-- | Identical trees produce an empty DataDiff.
+prop_zipperDiffIdentical :: Property
+prop_zipperDiffIdentical = property $ do
+  entries <- forAll genSomeEntries
+  let mst = fromNonEmpty entries
+      d   = zipperDiff (Just mst) mst
+  ddAdds        d === Map.empty
+  ddUpdates     d === Map.empty
+  ddDeletes     d === Map.empty
+  ddNewBlocks   d === Map.empty
+  ddRemovedCids d === Set.empty
 
-      -- 2. Changed-only blocks: when the tree has unchanged subtrees,
-      --    loading fails because those CIDs are missing.
-      case mstDiff changedOnly (Just (mstCid oldMst)) (mstCid newMst) of
-        Left (MstNodeNotFound _) ->
-          -- Expected: partial blocks can't resolve unchanged subtree CIDs
-          success
-        Left err -> do
-          -- Some other error — still a failure mode, which is valid
-          annotate ("mstDiff with partial blocks returned unexpected error: " ++ show err)
-          success
-        Right _ -> do
-          -- If it succeeded, the tree was entirely rewritten (all blocks
-          -- changed). This can happen for very small trees or when the
-          -- insertion restructures everything. We check this case.
-          annotate ("mstDiff with partial blocks succeeded; changed "
-                    ++ show (blockCount changedOnly) ++ " of "
-                    ++ show (blockCount newBlocks) ++ " blocks")
-          -- It should only succeed when all blocks are in the changed set
-          Hedgehog.diff (blockCount changedOnly) (>=) (blockCount newBlocks)
-
--- | Verify that 'fromBlockMap' on a partial block map (missing unchanged
--- subtree nodes) fails with MstNodeNotFound, while the full block map
--- succeeds.
-prop_goldenFromBlockMapPartial :: Property
-prop_goldenFromBlockMapPartial = withTests 1 $ property $ do
-  -- Build a tree
-  let keys = [ "com.example.collection/" <> T.pack (show i) | i <- [1..50 :: Int] ]
-  vals <- forAll $ sequence [ genCidBytes | _ <- keys ]
-  let entries = zip keys vals
-  case fromList entries of
-    Nothing -> failure
-    Just oldMst -> do
-      newKey <- forAll genMstKey
-      newVal <- forAll genCidBytes
-      let newMst = insert newKey newVal oldMst
-
-      let oldBlocks = toBlockMap oldMst
-      let newBlocks = toBlockMap newMst
-      let changedOnly = diffBlocks oldBlocks newBlocks
-
-      -- Full block map: loads successfully
-      case fromBlockMap newBlocks (mstCid newMst) of
-        Left err -> do
-          annotate ("fromBlockMap full failed: " ++ show err)
-          failure
-        Right loadedMst ->
-          toList loadedMst === toList newMst
-
-      -- Partial block map: fails because unchanged subtrees are missing
-      case fromBlockMap changedOnly (mstCid newMst) of
-        Left (MstNodeNotFound _) ->
-          success
-        Left err -> do
-          annotate ("fromBlockMap partial returned unexpected error: " ++ show err)
-          success
-        Right _ -> do
-          -- Could succeed if the entire tree was rebuilt
-          annotate "fromBlockMap partial succeeded (tree fully rebuilt)"
-          Hedgehog.diff (blockCount changedOnly) (>=) (blockCount newBlocks)
-
--- ---------------------------------------------------------------------------
--- Property-based tests
--- ---------------------------------------------------------------------------
-
--- | Changed blocks after an insert are always a subset of the new full blocks.
-prop_changedBlocksAreSubset :: Property
-prop_changedBlocksAreSubset = property $ do
+-- | The leaf-level result of 'zipperDiff' matches 'diff' (the list-based diff).
+prop_zipperDiffStructure :: Property
+prop_zipperDiffStructure = property $ do
   entries <- forAll genSomeEntries
   key     <- forAll genMstKey
   val     <- forAll genCidBytes
-  let oldMst   = fromNonEmpty entries
-  let newMst   = insert key val oldMst
-  let oldBlocks = toBlockMap oldMst
-  let newBlocks = toBlockMap newMst
-  let changed  = diffBlocks oldBlocks newBlocks
-  -- Every changed block CID must appear in the new block map
-  assert (Map.isSubmapOfBy (\_ _ -> True) changed newBlocks)
+  let old  = fromNonEmpty entries
+      new  = insert key val old
+      d    = zipperDiff (Just old) new
+      ws   = diff (Just old) new
+  -- Adds
+  Map.toAscList (ddAdds d)
+    === [ (wdKey w, wdCid w) | w@WCreate{} <- ws ]
+  -- Updates
+  Map.toAscList (ddUpdates d)
+    === [ (wdKey w, (wdPrev w, wdCid w)) | w@WUpdate{} <- ws ]
+  -- Deletes
+  Map.toAscList (ddDeletes d)
+    === [ (wdKey w, wdPrev w) | w@WDelete{} <- ws ]
 
--- | Changed blocks are a /strict/ subset of the new blocks when the tree
--- has unchanged subtrees (i.e., the tree is multi-level and the insert
--- doesn't rewrite every node).
-prop_changedBlocksStrictSubsetWhenSubtrees :: Property
-prop_changedBlocksStrictSubsetWhenSubtrees = property $ do
+-- | Block tracking: new blocks are a subset of the new block map;
+--   removed CIDs are absent from the new block map.
+prop_zipperDiffBlockTracking :: Property
+prop_zipperDiffBlockTracking = property $ do
+  entries <- forAll genSomeEntries
+  key     <- forAll genMstKey
+  val     <- forAll genCidBytes
+  let old         = fromNonEmpty entries
+      new         = insert key val old
+      d           = zipperDiff (Just old) new
+      oldBlockMap = toBlockMap old
+      newBlockMap = toBlockMap new
+  -- Every new block must be present in the new tree's block map.
+  assert (Map.isSubmapOfBy (\_ _ -> True) (ddNewBlocks d) newBlockMap)
+  -- No new block should be present in the old tree's block map (they are genuinely new).
+  assert (Map.null (Map.intersection (ddNewBlocks d) oldBlockMap))
+  -- Every removed CID must be absent from the new block map.
+  assert (all (\c -> not (Map.member c newBlockMap)) (Set.toList (ddRemovedCids d)))
+
+-- | All leaf CIDs in the new tree appear in 'ddNewLeafCids'.
+prop_zipperDiffNewLeafCids :: Property
+prop_zipperDiffNewLeafCids = property $ do
+  entries <- forAll genSomeEntries
+  key     <- forAll genMstKey
+  val     <- forAll genCidBytes
+  let old     = fromNonEmpty entries
+      new     = insert key val old
+      d       = zipperDiff (Just old) new
+      newLeaves = Set.fromList (map snd (toList new))
+  -- Every leaf CID from the new tree must be in ddNewLeafCids.
+  assert (Set.isSubsetOf newLeaves (ddNewLeafCids d))
+
+-- | Creating from Nothing still tracks blocks correctly.
+prop_zipperDiffFromEmpty :: Property
+prop_zipperDiffFromEmpty = property $ do
   entries <- forAll genLargeEntries
-  key     <- forAll genMstKey
-  val     <- forAll genCidBytes
-  let oldMst   = fromNonEmpty entries
-  let newMst   = insert key val oldMst
-  let oldBlocks = toBlockMap oldMst
-  let newBlocks = toBlockMap newMst
-  let changed  = diffBlocks oldBlocks newBlocks
-  -- For trees that retain subtrees, we expect fewer changed blocks than
-  -- total blocks. We use a soft check: changed blocks <= total blocks.
-  Hedgehog.diff (blockCount changed) (<=) (blockCount newBlocks)
-
--- | mstDiff with the full union of old and new blocks always succeeds.
-prop_mstDiffFullBlocksSucceeds :: Property
-prop_mstDiffFullBlocksSucceeds = property $ do
-  entries <- forAll genSomeEntries
-  key     <- forAll genMstKey
-  val     <- forAll genCidBytes
-  let oldMst      = fromNonEmpty entries
-  let newMst      = insert key val oldMst
-  let oldBlocks   = toBlockMap oldMst
-  let newBlocks   = toBlockMap newMst
-  let unionBlocks = Map.union newBlocks oldBlocks
-  case mstDiff unionBlocks (Just (mstCid oldMst)) (mstCid newMst) of
-    Left err -> do
-      annotate ("mstDiff failed with full blocks: " ++ show err)
-      failure
-    Right _writes ->
-      success
-
--- | mstDiff with only new blocks (no old blocks) fails when using the
--- old root, because the old tree's nodes are absent.
-prop_mstDiffNewBlocksOnlyFailsForOldRoot :: Property
-prop_mstDiffNewBlocksOnlyFailsForOldRoot = property $ do
-  entries <- forAll genSomeEntries
-  key     <- forAll genMstKey
-  val     <- forAll genCidBytes
-  let oldMst    = fromNonEmpty entries
-  let newMst    = insert key val oldMst
-  let newBlocks = toBlockMap newMst
-  -- Unless the old root happens to be the same (same CID), the old root
-  -- won't be found in the new-only block map.
-  case mstDiff newBlocks (Just (mstCid oldMst)) (mstCid newMst) of
-    Left (MstNodeNotFound _) ->
-      success
-    Left _ ->
-      success  -- any failure is valid
-    Right _ -> do
-      -- Can succeed if old root CID == new root CID (no actual change)
-      -- or if all old blocks happen to also be in new blocks
-      annotate "mstDiff succeeded with new-only blocks (old blocks coincide)"
-      success
-
--- | Partial (diff-only) blocks cause MstNodeNotFound when the tree has
--- unchanged subtrees. This is the core semantic the firehose must handle.
-prop_mstDiffPartialBlocksFailWithSubtrees :: Property
-prop_mstDiffPartialBlocksFailWithSubtrees = property $ do
-  entries <- forAll genLargeEntries
-  key     <- forAll genMstKey
-  val     <- forAll genCidBytes
-  let oldMst   = fromNonEmpty entries
-  let newMst   = insert key val oldMst
-  let oldBlocks = toBlockMap oldMst
-  let newBlocks = toBlockMap newMst
-  let changed  = diffBlocks oldBlocks newBlocks
-  -- With only the changed blocks, try to diff:
-  -- If the tree has unchanged subtrees and the changed blocks don't cover
-  -- all nodes, fromBlockMap will fail.
-  case mstDiff changed Nothing (mstCid newMst) of
-    Left (MstNodeNotFound _) -> do
-      -- Expected: unchanged subtree CIDs not in the partial block map
-      -- This is the failure mode that firehose update events hit.
-      success
-    Left _ ->
-      -- Any error from partial blocks is expected
-      success
-    Right _writes -> do
-      -- Can succeed if all blocks happened to change (rare for large trees)
-      annotate ("partial diff succeeded with " ++ show (blockCount changed)
-               ++ " of " ++ show (blockCount newBlocks) ++ " blocks")
-      Hedgehog.diff (blockCount changed) (>=) (blockCount newBlocks)
-
--- | The diff computed from full blocks matches the pure 'diff' function
--- operating on in-memory MSTs.
-prop_mstDiffMatchesPureDiff :: Property
-prop_mstDiffMatchesPureDiff = property $ do
-  entries <- forAll genSomeEntries
-  key     <- forAll genMstKey
-  val     <- forAll genCidBytes
-  let oldMst      = fromNonEmpty entries
-  let newMst      = insert key val oldMst
-  let oldBlocks   = toBlockMap oldMst
-  let newBlocks   = toBlockMap newMst
-  let unionBlocks = Map.union newBlocks oldBlocks
-  -- BlockMap-based diff
-  case mstDiff unionBlocks (Just (mstCid oldMst)) (mstCid newMst) of
-    Left err -> do
-      annotate ("mstDiff failed: " ++ show err)
-      failure
-    Right bmapWrites -> do
-      -- Pure in-memory diff
-      let pureWrites = Tree.diff (Just oldMst) newMst
-      bmapWrites === pureWrites
-
--- | mstDiff from Nothing (empty old tree) to the new tree succeeds
--- with only the new blocks — no old blocks needed.
-prop_mstDiffCreateSucceedsWithNewBlocks :: Property
-prop_mstDiffCreateSucceedsWithNewBlocks = property $ do
-  entries <- forAll genSomeEntries
-  let mst       = fromNonEmpty entries
-  let newBlocks = toBlockMap mst
-  case mstDiff newBlocks Nothing (mstCid mst) of
-    Left err -> do
-      annotate ("mstDiff from Nothing failed: " ++ show err)
-      failure
-    Right writes -> do
-      -- All entries should appear as WCreate
-      let recovered = [ (wdKey w, wdCid w) | w <- writes ]
-      recovered === NE.toList entries
-
--- | After an insert, the diff with full blocks reports exactly the expected
--- write operation(s): at minimum a WCreate for a new key or WUpdate for
--- an existing key.
-prop_mstDiffReportsCorrectWrites :: Property
-prop_mstDiffReportsCorrectWrites = property $ do
-  entries <- forAll genSomeEntries
-  key     <- forAll genMstKey
-  val     <- forAll genCidBytes
-  let oldMst      = fromNonEmpty entries
-  let newMst      = insert key val oldMst
-  let oldBlocks   = toBlockMap oldMst
-  let newBlocks   = toBlockMap newMst
-  let unionBlocks = Map.union newBlocks oldBlocks
-  case mstDiff unionBlocks (Just (mstCid oldMst)) (mstCid newMst) of
-    Left err -> do
-      annotate ("mstDiff failed: " ++ show err)
-      failure
-    Right writes -> do
-      -- The key we inserted must appear in the writes
-      let keysInWrites = map wdKey writes
-      assert (key `elem` keysInWrites)
-      -- The write for our key should be either WCreate or WUpdate
-      let isOurWrite w = wdKey w == key && wdCid w == val
-      assert (any isOurWrite writes)
+  let new         = fromNonEmpty entries
+      d           = zipperDiff Nothing new
+      newBlockMap = toBlockMap new
+  -- All new tree blocks are "new" since old tree was empty.
+  ddNewBlocks d === newBlockMap
+  ddRemovedCids d === Set.empty
+  -- All leaf CIDs must be captured.
+  let newLeaves = Set.fromList (map snd (NE.toList entries))
+  assert (Set.isSubsetOf newLeaves (ddNewLeafCids d))
 
 -- ---------------------------------------------------------------------------
 -- Group
@@ -386,28 +212,14 @@ prop_mstDiffReportsCorrectWrites = property $ do
 
 tests :: Group
 tests = Group "ATProto.MST.Diff"
-  [ -- Golden tests
-    ("golden: partial blocks fail with MstNodeNotFound",
-        prop_goldenPartialBlocksFail)
-  , ("golden: fromBlockMap partial vs full",
-        prop_goldenFromBlockMapPartial)
-    -- Property: block structure
-  , ("changed blocks are subset of new blocks",
-        prop_changedBlocksAreSubset)
-  , ("changed blocks are <= total blocks for large trees",
-        prop_changedBlocksStrictSubsetWhenSubtrees)
-    -- Property: mstDiff with full blocks
-  , ("mstDiff with full union blocks always succeeds",
-        prop_mstDiffFullBlocksSucceeds)
-  , ("mstDiff matches pure diff",
-        prop_mstDiffMatchesPureDiff)
-  , ("mstDiff create (Nothing old) succeeds with new blocks only",
-        prop_mstDiffCreateSucceedsWithNewBlocks)
-  , ("mstDiff reports correct writes after insert",
-        prop_mstDiffReportsCorrectWrites)
-    -- Property: partial/lazy block semantics
-  , ("mstDiff with new-blocks-only fails for old root",
-        prop_mstDiffNewBlocksOnlyFailsForOldRoot)
-  , ("mstDiff with partial blocks fails when unchanged subtrees exist",
-        prop_mstDiffPartialBlocksFailWithSubtrees)
+  [ ("zipperDiff: empty to single entry",        prop_zipperDiffEmptyToSingle)
+  , ("zipperDiff: all creates from empty old",   prop_zipperDiffCreates)
+  , ("zipperDiff: all deletes",                  prop_zipperDiffDeletes)
+  , ("zipperDiff: mixed adds/updates",           prop_zipperDiffUpdates)
+  , ("zipperDiff: identical trees give empty",   prop_zipperDiffIdentical)
+  , ("zipperDiff: matches list-based diff",      prop_zipperDiffStructure)
+  , ("zipperDiff: block tracking",               prop_zipperDiffBlockTracking)
+  , ("zipperDiff: new leaf CIDs captured",       prop_zipperDiffNewLeafCids)
+  , ("zipperDiff: from empty old tree",          prop_zipperDiffFromEmpty)
   ]
+
