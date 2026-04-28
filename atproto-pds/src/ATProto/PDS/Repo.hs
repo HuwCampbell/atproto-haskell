@@ -48,7 +48,7 @@ import qualified Data.ByteString      as BS
 import qualified Data.ByteString.Lazy as BL
 import qualified Data.List            as List
 import qualified Data.Map.Strict      as Map
-import Data.Maybe                     (mapMaybe, maybeToList)
+import Data.Maybe                     (mapMaybe, maybeToList, fromMaybe)
 import qualified Data.Text            as T
 import qualified Codec.CBOR.Decoding  as D
 import qualified Codec.CBOR.Read      as R
@@ -59,7 +59,7 @@ import ATProto.Car.DagCbor   (decodeCidTag42, skipValue)
 import ATProto.Car.Parser    (readCarWithRoot, CarError (..))
 import ATProto.Car.Writer    (writeCarWithRoot)
 import ATProto.MST.Build     (buildMST)
-import ATProto.MST.Diff      (mstDiff, WriteDescr (..))
+import ATProto.MST.Tree      (WriteDescr (..))
 import ATProto.MST.Encode    (encodeNode)
 import ATProto.MST.Get       (get)
 import ATProto.MST.Node      (NodeData (..), TreeEntry (..), decodeNode)
@@ -70,6 +70,7 @@ import ATProto.Syntax.TID    (tidNow, unTID)
 import ATProto.PDS.Storage   (BlockStore (..), RepoStore (..))
 import ATProto.PDS.ActorStore (ActorStore (..))
 import ATProto.PDS.Commit    (createSignedCommit)
+import qualified ATProto.MST.Tree as MST
 
 -- ---------------------------------------------------------------------------
 -- Error type
@@ -193,13 +194,13 @@ listRecords store commitCid collection = do
     Left err -> return (Left err)
     Right (dataRoot, mstBlocks) -> do
       -- Extract all MST entries via diff from empty.
-      case mstDiff mstBlocks Nothing dataRoot of
+      case MST.toList <$> MST.fromBlockMap mstBlocks dataRoot of
         Left mstErr -> return (Left (mapMstError mstErr))
         Right writes -> do
           let prefix = collection <> "/"
-              matching = [ (T.drop (T.length prefix) (wdKey w), wdCid w)
-                         | w <- writes
-                         , prefix `T.isPrefixOf` wdKey w
+              matching = [ (T.drop (T.length prefix) key, cid)
+                         | (key,cid) <- writes
+                         , prefix `T.isPrefixOf` key
                          ]
           records <- mapM (loadRecord s) matching
           return (sequence records)
@@ -252,37 +253,36 @@ applyWrites store key ops = do
         Left err -> return (Left err)
         Right (dataRoot, mstBlocks) -> do
           -- Get current entries from the MST.
-          let currentEntries = case mstDiff mstBlocks Nothing dataRoot of
-                Left _  -> []
-                Right ws -> [ (wdKey w, wdCid w) | w <- ws ]
+          case MST.toList <$> MST.fromBlockMap mstBlocks dataRoot of
+            Left mstErr  -> return (Left (mapMstError mstErr))
+            Right currentEntries -> do
+              -- Apply the write operations.
+              result <- applyOps s currentEntries ops
+              case result of
+                Left err -> return (Left err)
+                Right newEntries -> do
+                  -- Build new MST from the updated entry list.
+                  let (mNewRoot, newMstBlocks) = buildMST (List.sortBy (\a b -> compare (fst a) (fst b)) newEntries)
 
-          -- Apply the write operations.
-          result <- applyOps s currentEntries ops
-          case result of
-            Left err -> return (Left err)
-            Right newEntries -> do
-              -- Build new MST from the updated entry list.
-              let (mNewRoot, newMstBlocks) = buildMST (List.sortBy (\a b -> compare (fst a) (fst b)) newEntries)
+                  -- Handle empty MST case.
+                  newDataRoot <- case mNewRoot of
+                    Just root -> do
+                      root <$ Map.traverseWithKey (putBlock s) newMstBlocks
+                    Nothing -> do
+                      -- Empty MST: create an explicit empty node.
+                      let emptyNode  = NodeData Nothing []
+                          emptyBytes = encodeNode emptyNode
+                          emptyRoot  = cidForDagCbor emptyBytes
+                      putBlock s emptyRoot emptyBytes
+                      return emptyRoot
 
-              -- Handle empty MST case.
-              newDataRoot <- case mNewRoot of
-                Just root -> do
-                  root <$ Map.traverseWithKey (putBlock s) newMstBlocks
-                Nothing -> do
-                  -- Empty MST: create an explicit empty node.
-                  let emptyNode  = NodeData Nothing []
-                      emptyBytes = encodeNode emptyNode
-                      emptyRoot  = cidForDagCbor emptyBytes
-                  putBlock s emptyRoot emptyBytes
-                  return emptyRoot
-
-              -- Create and store the new commit.
-              rev <- unTID <$> tidNow
-              (commitCid, commitBytes) <-
-                createSignedCommit (unDID did) key rev (Just headCid) newDataRoot
-              putBlock s commitCid commitBytes
-              setRepoHead s commitCid
-              return (Right commitCid)
+                  -- Create and store the new commit.
+                  rev <- unTID <$> tidNow
+                  (commitCid, commitBytes) <-
+                    createSignedCommit (unDID did) key rev (Just headCid) newDataRoot
+                  putBlock s commitCid commitBytes
+                  setRepoHead s commitCid
+                  return (Right commitCid)
 
 -- ---------------------------------------------------------------------------
 -- Helpers
@@ -441,17 +441,17 @@ exportRepoCar store = do
               -- Collect all MST blocks.
               mstBlocks <- collectMstBlocks s dataRoot
               -- Collect record CIDs from the MST entries.
-              let recordCids = case mstDiff mstBlocks Nothing dataRoot of
-                    Left _   -> []
-                    Right ws -> map wdCid ws
-              -- Fetch record blocks.
-              recBlocks <- fmap Map.fromList . mapM (\c -> do
-                mb <- getBlock s c
-                return (c, maybe BS.empty id mb)) $ recordCids
-              -- Assemble the full block map: commit + MST + records.
-              let allBlocks = Map.insert commitCid commitBytes
-                            $ Map.union mstBlocks recBlocks
-              return (Right (writeCarWithRoot commitCid allBlocks))
+              case MST.toList <$> MST.fromBlockMap mstBlocks dataRoot of
+                Left mstErr  -> return (Left (mapMstError mstErr))
+                Right currentEntries -> do
+                  -- Fetch record blocks.
+                  recBlocks <- fmap Map.fromList . traverse (\(_, cid) -> do
+                    mb <- getBlock s cid
+                    return (cid, fromMaybe BS.empty mb)) $ currentEntries
+                  -- Assemble the full block map: commit + MST + records.
+                  let allBlocks = Map.insert commitCid commitBytes
+                                $ Map.union mstBlocks recBlocks
+                  return (Right (writeCarWithRoot commitCid allBlocks))
 
 -- | Import a CAR v1 byte string into the block store.
 --
