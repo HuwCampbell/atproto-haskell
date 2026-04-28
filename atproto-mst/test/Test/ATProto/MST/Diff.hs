@@ -96,9 +96,9 @@ prop_zipperDiffDeletes :: Property
 prop_zipperDiffDeletes = property $ do
   entries <- forAll genSomeEntries
   let old      = fromNonEmpty entries
-      -- Build a new tree with all keys removed
-      newMst   = foldr (\(k, _) t -> delete k t) old (NE.toList entries)
-      d        = zipperDiff (Just old) newMst
+      -- Build a new tree with all keys removed (results in an empty MST)
+      emptyNew = foldr (\(k, _) t -> delete k t) old (NE.toList entries)
+      d        = zipperDiff (Just old) emptyNew
   ddAdds    d === Map.empty
   ddUpdates d === Map.empty
   -- Every original entry must be in the deletes map

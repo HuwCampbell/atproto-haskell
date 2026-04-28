@@ -113,7 +113,7 @@ data WriteDescr
 
 -- | Structured result of a zipper-based diff between two MST states.
 --
--- Mirrors the TypeScript @DataDiff@ class in @\@bluesky-social\/atproto@.
+-- Mirrors the TypeScript @DataDiff@ class in @\@bluesky-social/atproto@.
 data DataDiff = DataDiff
   { ddAdds        :: Map.Map T.Text CidBytes
     -- ^ Leaves present in the new tree but absent from the old tree.
