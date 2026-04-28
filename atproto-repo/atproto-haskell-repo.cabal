@@ -25,6 +25,7 @@ library
   exposed-modules:
       -- app.bsky.*
       ATProto.Bsky.Feed.GetFeedSkeleton
+      ATProto.Bsky.Feed.Like
       ATProto.Bsky.Feed.Post
       -- com.atproto.identity.*
       ATProto.Identity.Defs
@@ -85,6 +86,7 @@ test-suite atproto-repo-tests
   type:             exitcode-stdio-1.0
   main-is:          Main.hs
   other-modules:
+      Test.ATProto.Bsky.Feed.Like
       Test.ATProto.Bsky.Feed.Post
       Test.ATProto.Identity.ResolveHandle
       Test.ATProto.Label.Defs
