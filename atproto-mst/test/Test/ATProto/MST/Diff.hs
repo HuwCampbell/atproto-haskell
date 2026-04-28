@@ -1,8 +1,15 @@
--- | Tests for the zipper-based 'zipperDiff' function.
+-- | Tests for the zipper-based MST diff functions.
 --
 -- These tests verify that 'zipperDiff' correctly identifies additions,
 -- updates, deletions, and block changes between two MST states, and that
 -- its results are consistent with the simpler list-based 'diff'.
+--
+-- A key property under test is that block tracking is /lazy/: the new
+-- block set must contain exactly those MST node blocks that are present
+-- in the new tree but absent from the old tree, and the removed-CID set
+-- must contain exactly those node CIDs that are present in the old tree
+-- but absent from the new tree.  This means that unchanged subtrees (same
+-- CID in both trees) contribute neither new blocks nor removed CIDs.
 module Test.ATProto.MST.Diff (tests) where
 
 import Hedgehog
