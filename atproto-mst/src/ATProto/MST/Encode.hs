@@ -49,7 +49,7 @@ nodeEncoding (NodeData mLeft entries) =
 encodeEntryList :: [TreeEntry] -> E.Encoding
 encodeEntryList entries =
      E.encodeListLen (fromIntegral (length entries))
-  <> mconcat (map encodeTreeEntry entries)
+  <> foldMap encodeTreeEntry entries
 
 encodeTreeEntry :: TreeEntry -> E.Encoding
 encodeTreeEntry (TreeEntry prefix suffix value mRight) =
