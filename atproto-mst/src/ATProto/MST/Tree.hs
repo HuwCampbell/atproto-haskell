@@ -15,7 +15,10 @@
 -- store any "real" data, just pointers to it based on the content hash.
 module ATProto.MST.Tree
   ( -- * Types
-    MST (..)
+    MST
+  , mstCid
+  , mstEntries
+
   , NodeEntry (..)
     -- * Write descriptor (for diff)
   , WriteDescr (..)
