@@ -2,5 +2,3 @@ tests: True
 
 -- Hedgehog-1.7 depends on boring whose base bound hasn't caught up to GHC 9.12.
 allow-newer: boring:base
-
-with-compiler: ghc-9.14.1

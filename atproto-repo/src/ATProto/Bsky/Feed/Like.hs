@@ -24,6 +24,8 @@ data FeedLike = FeedLike
     -- ^ The post (or other record) being liked.
   , flCreatedAt :: T.Text
     -- ^ RFC 3339 creation timestamp.
+  , flVia       :: Maybe StrongRef
+    -- ^ Optional record through which the like was performed (e.g. a repost).
   } deriving (Eq, Show)
 
 -- | Codec for 'FeedLike'.
@@ -31,5 +33,6 @@ feedLikeCodec :: Codec FeedLike
 feedLikeCodec =
     Codec.record "app.bsky.feed.like" $
         FeedLike
-            <$> Codec.requiredField "subject"   strongRefCodec  flSubject
-            <*> Codec.requiredField "createdAt" Codec.datetime  flCreatedAt
+            <$> Codec.requiredField "subject"   strongRefCodec          flSubject
+            <*> Codec.requiredField "createdAt" Codec.datetime           flCreatedAt
+            <*> Codec.optionalField "via"       strongRefCodec           flVia

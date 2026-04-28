@@ -32,6 +32,7 @@ prop_parseMinimalLike = withTests 1 . property $ do
   flCreatedAt fp               === "2024-01-15T12:00:00.000Z"
   srUri (flSubject fp)         === "at://did:plc:abc/app.bsky.feed.post/rkey"
   srCid (flSubject fp)         === "bafyreiexample"
+  flVia fp                     === Nothing
 
 -- | Encoding a 'FeedLike' and decoding the result yields the original value.
 prop_roundTrip :: Property
