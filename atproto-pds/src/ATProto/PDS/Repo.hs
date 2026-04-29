@@ -58,8 +58,7 @@ import ATProto.Car.BlockMap  (BlockMap)
 import ATProto.Car.DagCbor   (decodeCidTag42, skipValue)
 import ATProto.Car.Parser    (readCarWithRoot, CarError (..))
 import ATProto.Car.Writer    (writeCarWithRoot)
-import ATProto.MST.Build     (buildMST)
-import ATProto.MST.Tree      (WriteDescr (..))
+
 import ATProto.MST.Encode    (encodeNode)
 import ATProto.MST.Get       (get)
 import ATProto.MST.Node      (NodeData (..), TreeEntry (..), decodeNode)
@@ -251,31 +250,33 @@ applyWrites store key ops = do
       r <- loadCommitData s headCid
       case r of
         Left err -> return (Left err)
-        Right (dataRoot, mstBlocks) -> do
-          -- Get current entries from the MST.
-          case MST.toList <$> MST.fromBlockMap mstBlocks dataRoot of
+        Right (dataRoot, mstBlocks) ->
+          -- Load old MST.
+          case MST.fromBlockMap mstBlocks dataRoot of
             Left mstErr  -> return (Left (mapMstError mstErr))
-            Right currentEntries -> do
-              -- Apply the write operations.
-              result <- applyOps s currentEntries ops
-              case result of
+            Right oldMst -> do
+              let currentEntries = MST.toList oldMst
+              -- Transform entries purely.
+              case transformEntries currentEntries ops of
                 Left err -> return (Left err)
-                Right newEntries -> do
-                  -- Build new MST from the updated entry list.
-                  let (mNewRoot, newMstBlocks) = buildMST (List.sortBy (\a b -> compare (fst a) (fst b)) newEntries)
-
-                  -- Handle empty MST case.
-                  newDataRoot <- case mNewRoot of
-                    Just root -> do
-                      root <$ Map.traverseWithKey (putBlock s) newMstBlocks
-                    Nothing -> do
-                      -- Empty MST: create an explicit empty node.
-                      let emptyNode  = NodeData Nothing []
-                          emptyBytes = encodeNode emptyNode
-                          emptyRoot  = cidForDagCbor emptyBytes
-                      putBlock s emptyRoot emptyBytes
-                      return emptyRoot
-
+                Right (newEntries, newRecordBlocks) -> do
+                  -- Build new MST from sorted transformed entries.
+                  let sortedEntries = List.sortBy (\a b -> compare (fst a) (fst b)) newEntries
+                      (newDataRoot, newMstNodeBlocks) =
+                        case MST.fromList sortedEntries of
+                          Just newMst ->
+                            -- Use zipperDiff to find only genuinely new MST node blocks.
+                            let dataDiff = MST.zipperDiff (Just oldMst) newMst
+                            in (MST.rootCid newMst, MST.ddNewBlocks dataDiff)
+                          Nothing ->
+                            -- Empty MST: create an explicit empty node.
+                            let emptyNode  = NodeData Nothing []
+                                emptyBytes = encodeNode emptyNode
+                                emptyRoot  = cidForDagCbor emptyBytes
+                            in (emptyRoot, Map.singleton emptyRoot emptyBytes)
+                  -- Store all new blocks atomically (record + MST nodes).
+                  _ <- Map.traverseWithKey (putBlock s) newRecordBlocks
+                  _ <- Map.traverseWithKey (putBlock s) newMstNodeBlocks
                   -- Create and store the new commit.
                   rev <- unTID <$> tidNow
                   (commitCid, commitBytes) <-
@@ -288,40 +289,44 @@ applyWrites store key ops = do
 -- Helpers
 -- ---------------------------------------------------------------------------
 
--- | Apply a list of write operations to the current entry list.
-applyOps
-  :: BlockStore s
-  => s
-  -> [(T.Text, CidBytes)]   -- ^ current entries
+-- | Pure: apply write operations to the current entry list.
+--
+-- Returns either an error or a pair of:
+--   - the new @(key, CID)@ entry list
+--   - a map from record CID to record bytes for every created or updated record
+transformEntries
+  :: [(T.Text, CidBytes)]   -- ^ current entries
   -> [WriteOp]
-  -> IO (Either PdsError [(T.Text, CidBytes)])
-applyOps s = go
+  -> Either PdsError ([(T.Text, CidBytes)], Map.Map CidBytes BS.ByteString)
+transformEntries entries0 ops0 = go entries0 ops0 Map.empty
   where
-    go entries [] = return (Right entries)
-    go entries (op:rest) =
+    go entries [] newBlocks = Right (entries, newBlocks)
+    go entries (op:rest) newBlocks =
       case op of
-        Create col rk recordBytes -> do
+        Create col rk recordBytes ->
           let mstKey = col <> "/" <> rk
-          case lookup mstKey entries of
-            Just _  -> return (Left (PdsRecordExists mstKey))
-            Nothing -> do
-              let recCid = cidForDagCbor recordBytes
-              putBlock s recCid recordBytes
-              go (entries ++ [(mstKey, recCid)]) rest
+          in case lookup mstKey entries of
+               Just _  -> Left (PdsRecordExists mstKey)
+               Nothing ->
+                 let recCid = cidForDagCbor recordBytes
+                 in go (entries ++ [(mstKey, recCid)])
+                       rest
+                       (Map.insert recCid recordBytes newBlocks)
 
-        Update col rk recordBytes -> do
+        Update col rk recordBytes ->
           let mstKey = col <> "/" <> rk
               withoutOld = filter (\(k, _) -> k /= mstKey) entries
               recCid = cidForDagCbor recordBytes
-          putBlock s recCid recordBytes
-          go (withoutOld ++ [(mstKey, recCid)]) rest
+          in go (withoutOld ++ [(mstKey, recCid)])
+                rest
+                (Map.insert recCid recordBytes newBlocks)
 
-        Delete col rk -> do
+        Delete col rk ->
           let mstKey = col <> "/" <> rk
-          case lookup mstKey entries of
-            Nothing -> return (Left (PdsRecordNotFound mstKey))
-            Just _  ->
-              go (filter (\(k, _) -> k /= mstKey) entries) rest
+          in case lookup mstKey entries of
+               Nothing -> Left (PdsRecordNotFound mstKey)
+               Just _  ->
+                 go (filter (\(k, _) -> k /= mstKey) entries) rest newBlocks
 
 -- | Load the commit's data root CID and all MST blocks.
 loadCommitData
