@@ -694,7 +694,7 @@ and assesses readiness.
 | auth-routes.ts / auth-scope.ts -- OAuth provider routes | atproto-oauth-provider covers token verification and DPoP; authorisation code grant flow absent | Partial |
 | sequencer/ -- outbound event sequencer (firehose emitter) | atproto-firehose covers the consumer side | Missing (producer side) |
 | did-cache/ -- persisted DID document cache | CachingResolver in atproto-did | Present |
-| disk-blobstore.ts / aws -- blob storage | None | Missing |
+| disk-blobstore.ts / aws -- blob storage | BlobStore | Present |
 | mailer/ -- email for verification and password reset | None | Missing (out of scope for library) |
 | handle/ -- handle resolution and validation | atproto-identity + atproto-syntax | Present |
 | config/ -- server configuration | None | Missing (application concern) |
