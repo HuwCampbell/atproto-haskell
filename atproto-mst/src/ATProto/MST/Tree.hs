@@ -56,7 +56,7 @@ module ATProto.MST.Tree
   , firstLeaf
   , nextLeaf
 
-  , nodeLayer
+  -- * Rendering
   , render
   ) where
 
@@ -406,12 +406,10 @@ zipperDiff mOld new =
     go Nothing (Just nz) acc =
       case zFocus nz of
         Leaf nk nv ->
-          go Nothing (advance nz) acc
-            { ddAdds        = Map.insert nk nv (ddAdds acc) }
-        SubTree (MST cid entries) ->
-          let bytes = encodeNode (toNodeData entries)
-          in go Nothing (advance nz) acc
-            { ddNewBlocks   = Map.insert cid bytes (ddNewBlocks acc) }
+          go Nothing (advance nz)
+            acc { ddAdds = Map.insert nk nv (ddAdds acc) }
+        SubTree mst  ->
+          go Nothing (advance nz) (nodeAdd mst acc)
 
     -- New exhausted: all remaining old leaves are deletions.
     go (Just oz) Nothing acc =
@@ -433,7 +431,7 @@ zipperDiff mOld new =
           | ok == nk ->
               -- Same key, different CID: update.
               go (advance oz) (advance nz) acc
-                { ddUpdates     = Map.insert ok (ov, nv) (ddUpdates acc) }
+                { ddUpdates = Map.insert ok (ov, nv) (ddUpdates acc) }
           | ok < nk ->
               -- Old key has no counterpart in new: deletion.
               go (advance oz) (Just nz) acc
@@ -441,18 +439,15 @@ zipperDiff mOld new =
           | otherwise ->
               -- New key has no counterpart in old: addition.
               go (Just oz) (advance nz) acc
-                { ddAdds        = Map.insert nk nv (ddAdds acc) }
+                { ddAdds    = Map.insert nk nv (ddAdds acc) }
 
-        (Leaf {}, SubTree (MST newCid entries)) ->
+        (Leaf {}, SubTree mst) ->
           -- Step into the subtree to try and find the leaf
-          let bytes = encodeNode (toNodeData entries)
-          in go (Just oz) (advance nz) acc
-            { ddNewBlocks = Map.insert newCid bytes (ddNewBlocks acc) }
+          go (Just oz) (advance nz) (nodeAdd mst acc)
 
-        (SubTree (MST oldCid _), Leaf {}) ->
+        (SubTree mst, Leaf {}) ->
           -- Step into the subtree to try and find the leaf
-          go (advance oz) (Just nz) acc
-            { ddRemovedBlocks = Set.insert oldCid (ddRemovedBlocks acc) }
+          go (advance oz) (Just nz) (nodeRemove mst acc)
 
         (SubTree oldMst@(MST oldCid _), SubTree newMst@(MST newCid newEntries))
           -- Identical subtree, move to next sibling
@@ -461,16 +456,11 @@ zipperDiff mOld new =
 
           -- Different nodes, if the new is a spine
           | nodeLayer oldMst > nodeLayer newMst ->
-            go (stepInto oz) (Just nz) acc
-              { ddRemovedBlocks = Set.insert oldCid (ddRemovedBlocks acc)
-              }
+            go (stepInto oz) (Just nz) (nodeRemove oldMst acc)
 
           -- Different nodes, if the old is a spine
           | nodeLayer oldMst < nodeLayer newMst ->
-            let bytes = encodeNode (toNodeData newEntries) in
-            go (Just oz) (stepInto nz) acc
-              { ddNewBlocks = Map.insert newCid bytes (ddNewBlocks acc)
-              }
+            go (Just oz) (stepInto nz) (nodeAdd newMst acc)
 
           -- Same layer
           | otherwise ->
@@ -479,6 +469,21 @@ zipperDiff mOld new =
               { ddRemovedBlocks = Set.insert oldCid (ddRemovedBlocks acc)
               , ddNewBlocks = Map.insert newCid bytes (ddNewBlocks acc)
               }
+
+    -- Handle edge case when there are pure spine nodes which
+    -- have been trimmed.
+    nodeAdd (MST cid entries) acc =
+      if Set.member cid (ddRemovedBlocks acc) then
+        acc { ddRemovedBlocks = Set.delete cid (ddRemovedBlocks acc) }
+      else
+        let bytes = encodeNode (toNodeData entries)
+        in acc { ddNewBlocks = Map.insert cid bytes (ddNewBlocks acc) }
+
+    nodeRemove (MST cid _) acc =
+      if Map.member cid (ddNewBlocks acc) then
+        acc { ddNewBlocks = Map.delete cid (ddNewBlocks acc) }
+      else
+        acc { ddRemovedBlocks = Set.insert cid (ddRemovedBlocks acc) }
 
 -- ---------------------------------------------------------------------------
 -- Proof verification
@@ -670,17 +675,6 @@ wrapToLayer targetLayer mst
   | nodeLayer mst >= targetLayer = mst
   | otherwise                    = wrapToLayer targetLayer (makeMST [SubTree mst])
 
--- | Compute the layer of an MST node.
---
--- The layer of a node equals the leading-zero count of any of its leaf keys;
--- all leaves in a node are at the same layer.  For pure spine nodes (no
--- leaves at this level) the layer is derived recursively from the single
--- subtree child.
-nodeEntryLayer :: NodeEntry -> Int
-nodeEntryLayer = go
-  where
-    go (Leaf k _)    = leadingZerosOnHash (TE.encodeUtf8 k)
-    go (SubTree sub) = nodeLayer sub
 
 -- | Compute the layer of an MST node.
 --
@@ -858,10 +852,10 @@ mergeSubtrees (MST _ left) (MST _ right) =
 -- Pretty Printing
 
 --
--- Rendering implementation based on the one from containers/Data.Tree
+-- Rendering implementation based on the one from Hedgehog
 --
 
--- | Render a tree of strings.
+-- | Render an MST's structure.
 --
 render :: MST -> String
 render =
