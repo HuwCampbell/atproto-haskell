@@ -1,3 +1,4 @@
+{-# LANGUAGE BangPatterns #-}
 -- | Primary Merkle Search Tree data structure.
 --
 -- This module provides the core @MST@ type together with pure operations
@@ -119,15 +120,15 @@ data WriteDescr
 --
 -- Mirrors the TypeScript @DataDiff@ class in @\@bluesky-social/atproto@.
 data DataDiff = DataDiff
-  { ddAdds          :: Map.Map T.Text CidBytes
+  { ddAdds          :: !(Map.Map T.Text CidBytes)
     -- ^ Leaves present in the new tree but absent from the old tree.
-  , ddUpdates       :: Map.Map T.Text (CidBytes, CidBytes)
+  , ddUpdates       :: !(Map.Map T.Text (CidBytes, CidBytes))
     -- ^ Leaves present in both trees with changed CIDs: key -> (old, new).
-  , ddDeletes       :: Map.Map T.Text CidBytes
+  , ddDeletes       :: !(Map.Map T.Text CidBytes)
     -- ^ Leaves present in the old tree but absent from the new tree.
-  , ddNewBlocks     :: BlockMap
+  , ddNewBlocks     :: !BlockMap
     -- ^ New internal MST node blocks (present in new tree, absent from old).
-  , ddRemovedBlocks :: Set.Set CidBytes
+  , ddRemovedBlocks :: !(Set.Set CidBytes)
     -- ^ Internal MST node CIDs present in the old tree but not in the new tree.
   } deriving (Eq, Show)
 
@@ -400,10 +401,10 @@ zipperDiff mOld new =
     go :: Maybe MSTZipper -> Maybe MSTZipper -> DataDiff -> DataDiff
 
     -- Both exhausted: done.
-    go Nothing Nothing acc = acc
+    go Nothing Nothing !acc = acc
 
     -- Old exhausted: all remaining new leaves are additions.
-    go Nothing (Just nz) acc =
+    go Nothing (Just nz) !acc =
       case zFocus nz of
         Leaf nk nv ->
           go Nothing (advance nz)
@@ -412,7 +413,7 @@ zipperDiff mOld new =
           go Nothing (advance nz) (nodeAdd mst acc)
 
     -- New exhausted: all remaining old leaves are deletions.
-    go (Just oz) Nothing acc =
+    go (Just oz) Nothing !acc =
       case zFocus oz of
         Leaf ok ov ->
           go (advance oz) Nothing acc
@@ -422,7 +423,7 @@ zipperDiff mOld new =
             { ddRemovedBlocks = Set.insert cid (ddRemovedBlocks acc) }
 
     -- Both active: compare current leaves.
-    go (Just oz) (Just nz) acc =
+    go (Just oz) (Just nz) !acc =
       case (zFocus oz, zFocus nz) of
         (Leaf ok ov, Leaf nk nv)
           | ok == nk && ov == nv ->
