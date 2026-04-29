@@ -23,19 +23,15 @@ import qualified Data.Text            as T
 
 import ATProto.Car.Cid      (CidBytes, unsafeRawCid)
 import ATProto.MST.Tree
-  ( MST (..)
-  , NodeEntry (..)
-  , DataDiff (..)
+  ( DataDiff (..)
   , WriteDescr (..)
-  , fromList
   , fromNonEmpty
   , insert
   , delete
-  , toList
   , toBlockMap
-  , zipperDiff
-  , diff
+  , zipperDiff, nodeLayer
   )
+import qualified ATProto.MST.Tree as MST
 
 import Prelude hiding (lookup)
 
@@ -141,11 +137,11 @@ prop_zipperDiffIdentical = property $ do
   entries <- forAll genSomeEntries
   let mst = fromNonEmpty entries
       d   = zipperDiff (Just mst) mst
-  ddAdds        d === Map.empty
-  ddUpdates     d === Map.empty
-  ddDeletes     d === Map.empty
-  ddNewBlocks   d === Map.empty
-  ddRemovedCids d === Set.empty
+  ddAdds          d === Map.empty
+  ddUpdates       d === Map.empty
+  ddDeletes       d === Map.empty
+  ddNewBlocks     d === Map.empty
+  ddRemovedBlocks d === Set.empty
 
 -- | The leaf-level result of 'zipperDiff' matches 'diff' (the list-based diff).
 prop_zipperDiffStructure :: Property
@@ -156,7 +152,8 @@ prop_zipperDiffStructure = property $ do
   let old  = fromNonEmpty entries
       new  = insert key val old
       d    = zipperDiff (Just old) new
-      ws   = diff (Just old) new
+      ws   = MST.diff (Just old) new
+
   -- Adds
   Map.toAscList (ddAdds d)
     === [ (wdKey w, wdCid w) | w@WCreate{} <- ws ]
@@ -179,25 +176,19 @@ prop_zipperDiffBlockTracking = property $ do
       d           = zipperDiff (Just old) new
       oldBlockMap = toBlockMap old
       newBlockMap = toBlockMap new
+
+  annotate (show (MST.nodeLayer old))
+  annotate (MST.render old)
+
+  annotate (show (MST.nodeLayer new))
+  annotate (MST.render new)
+
   -- Every new block must be present in the new tree's block map.
   assert (Map.isSubmapOfBy (\_ _ -> True) (ddNewBlocks d) newBlockMap)
   -- No new block should be present in the old tree's block map (they are genuinely new).
   assert (Map.null (Map.intersection (ddNewBlocks d) oldBlockMap))
   -- Every removed CID must be absent from the new block map.
-  assert (all (\c -> not (Map.member c newBlockMap)) (Set.toList (ddRemovedCids d)))
-
--- | All leaf CIDs in the new tree appear in 'ddNewLeafCids'.
-prop_zipperDiffNewLeafCids :: Property
-prop_zipperDiffNewLeafCids = property $ do
-  entries <- forAll genSomeEntries
-  key     <- forAll genMstKey
-  val     <- forAll genCidBytes
-  let old     = fromNonEmpty entries
-      new     = insert key val old
-      d       = zipperDiff (Just old) new
-      newLeaves = Set.fromList (map snd (toList new))
-  -- Every leaf CID from the new tree must be in ddNewLeafCids.
-  assert (Set.isSubsetOf newLeaves (ddNewLeafCids d))
+  assert (all (\c -> not (Map.member c newBlockMap)) (Set.toList (ddRemovedBlocks d)))
 
 -- | Creating from Nothing still tracks blocks correctly.
 prop_zipperDiffFromEmpty :: Property
@@ -208,10 +199,7 @@ prop_zipperDiffFromEmpty = property $ do
       newBlockMap = toBlockMap new
   -- All new tree blocks are "new" since old tree was empty.
   ddNewBlocks d === newBlockMap
-  ddRemovedCids d === Set.empty
-  -- All leaf CIDs must be captured.
-  let newLeaves = Set.fromList (map snd (NE.toList entries))
-  assert (Set.isSubsetOf newLeaves (ddNewLeafCids d))
+  ddRemovedBlocks d === Set.empty
 
 -- ---------------------------------------------------------------------------
 -- Group
@@ -226,7 +214,6 @@ tests = Group "ATProto.MST.Diff"
   , ("zipperDiff: identical trees give empty",   prop_zipperDiffIdentical)
   , ("zipperDiff: matches list-based diff",      prop_zipperDiffStructure)
   , ("zipperDiff: block tracking",               prop_zipperDiffBlockTracking)
-  , ("zipperDiff: new leaf CIDs captured",       prop_zipperDiffNewLeafCids)
   , ("zipperDiff: from empty old tree",          prop_zipperDiffFromEmpty)
   ]
 
