@@ -1,3 +1,4 @@
+{-# LANGUAGE ScopedTypeVariables #-}
 -- | Account store abstraction for the PDS.
 --
 -- This module provides:
@@ -35,14 +36,12 @@ module ATProto.PDS.AccountStore
 
 import           Control.Monad.IO.Class (MonadIO (..))
 import qualified Data.ByteString        as BS
-import qualified Data.ByteArray         as BA
 import qualified Data.ByteArray.Encoding as BAE
 import qualified Data.Text              as T
 import qualified Data.Text.Encoding     as TE
-import           Data.Bits              (xor)
 import           Data.Time.Clock        (UTCTime)
 
-import qualified Crypto.KDF.PBKDF2      as PBKDF2
+import qualified Crypto.KDF.BCrypt      as BCrypt
 import           Crypto.Random          (getRandomBytes)
 
 import           ATProto.Crypto.Types   (PrivKey)
@@ -92,8 +91,8 @@ newtype PasswordHash = PasswordHash { unPasswordHash :: T.Text }
 -- ---------------------------------------------------------------------------
 
 -- | Number of PBKDF2 iterations used for password hashing.
-pbkdf2Iterations :: Int
-pbkdf2Iterations = 100000
+bcryptCost :: Int
+bcryptCost = 10
 
 -- | Hash a plaintext password for storage.
 --
@@ -103,13 +102,9 @@ pbkdf2Iterations = 100000
 -- the hash — not the original salt.
 hashPassword :: T.Text -> IO PasswordHash
 hashPassword pwd = do
-  salt <- getRandomBytes 16 :: IO BS.ByteString
-  let params  = PBKDF2.Parameters { PBKDF2.iterCounts = pbkdf2Iterations, PBKDF2.outputLength = 32 }
-      digest  = PBKDF2.fastPBKDF2_SHA256 params (TE.encodeUtf8 pwd) salt :: BS.ByteString
-      saltB64 = TE.decodeUtf8 (BAE.convertToBase BAE.Base64 salt :: BS.ByteString)
-      hashB64 = TE.decodeUtf8 (BAE.convertToBase BAE.Base64 digest :: BS.ByteString)
-      encoded = saltB64 <> "$" <> T.pack (show pbkdf2Iterations) <> "$" <> hashB64
-  return (PasswordHash encoded)
+  raw :: BS.ByteString <- BCrypt.hashPassword bcryptCost (TE.encodeUtf8 pwd)
+  return (PasswordHash (TE.decodeUtf8 (BAE.convertToBase BAE.Base64 raw)))
+
 
 -- | Verify a plaintext password against a stored 'PasswordHash'.
 --
@@ -117,18 +112,12 @@ hashPassword pwd = do
 -- constant-time comparison to prevent timing side-channels.
 checkPassword :: T.Text -> PasswordHash -> Bool
 checkPassword pwd (PasswordHash encoded) =
-  case T.splitOn "$" encoded of
-    [saltB64, iterStr, hashB64] ->
-      case ( BAE.convertFromBase BAE.Base64 (TE.encodeUtf8 saltB64) :: Either String BS.ByteString
-           , reads (T.unpack iterStr) :: [(Int, String)]
-           , BAE.convertFromBase BAE.Base64 (TE.encodeUtf8 hashB64) :: Either String BS.ByteString
-           ) of
-        (Right salt, [(iters, "")], Right expectedHash) ->
-          let params = PBKDF2.Parameters { PBKDF2.iterCounts = iters, PBKDF2.outputLength = BS.length expectedHash }
-              actual = PBKDF2.fastPBKDF2_SHA256 params (TE.encodeUtf8 pwd) salt :: BS.ByteString
-          in  constantTimeEq actual expectedHash
-        _ -> False
-    _ -> False
+  let raw :: Either String BS.ByteString
+      raw = BAE.convertFromBase BAE.Base64 (TE.encodeUtf8 encoded)
+  in case raw of
+    Left _ -> False
+    Right x -> BCrypt.validatePassword (TE.encodeUtf8 pwd) x
+
 
 -- ---------------------------------------------------------------------------
 -- Token helper
@@ -259,16 +248,3 @@ class AccountStore s where
     => s
     -> DID
     -> m (Maybe PrivKey)
-
--- ---------------------------------------------------------------------------
--- Internal helpers
--- ---------------------------------------------------------------------------
-
--- | Constant-time byte-string equality (prevents timing attacks on password
--- comparison).
-constantTimeEq :: BS.ByteString -> BS.ByteString -> Bool
-constantTimeEq a b
-  | BS.length a /= BS.length b = False
-  | otherwise =
-      -- BS.zipWith returns [Word8]; pack it and check all bytes are zero.
-      BS.all (== 0) (BS.pack (BS.zipWith xor a b))
