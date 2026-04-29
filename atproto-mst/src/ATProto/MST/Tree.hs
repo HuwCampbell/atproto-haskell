@@ -22,6 +22,9 @@ module ATProto.MST.Tree
   , NodeEntry (..)
     -- * Write descriptor (for diff)
   , WriteDescr (..)
+    -- * Zipper-based diff
+  , DataDiff (..)
+  , zipperDiff
     -- * Record operation (for proof verification)
   , RecordOp (..)
     -- * BlockMap serialisation
@@ -52,6 +55,9 @@ module ATProto.MST.Tree
   , up
   , firstLeaf
   , nextLeaf
+
+  -- * Rendering
+  , render
   ) where
 
 import Prelude hiding (lookup)
@@ -60,6 +66,7 @@ import qualified Data.ByteString      as BS
 import qualified Data.List.NonEmpty   as NE
 import qualified Data.Map.Strict      as Map
 import           Data.Maybe           (maybeToList)
+import qualified Data.Set             as Set
 import qualified Data.Text            as T
 import qualified Data.Text.Encoding   as TE
 
@@ -69,6 +76,7 @@ import ATProto.MST.Node     (NodeData (..), TreeEntry (..), decodeNode)
 import ATProto.MST.Encode   (encodeNode, cidForDagCbor)
 import ATProto.MST.Layer    (leadingZerosOnHash)
 import ATProto.MST.Types    (MstError (..))
+import Control.Applicative ((<|>))
 
 -- ---------------------------------------------------------------------------
 -- Core types
@@ -102,6 +110,26 @@ data WriteDescr
   | WDelete { wdKey :: T.Text, wdPrev :: CidBytes }
     -- ^ A key present in the old tree but absent from the new tree.
   deriving (Eq, Show)
+
+-- ---------------------------------------------------------------------------
+-- Zipper-based diff result
+-- ---------------------------------------------------------------------------
+
+-- | Structured result of a zipper-based diff between two MST states.
+--
+-- Mirrors the TypeScript @DataDiff@ class in @\@bluesky-social/atproto@.
+data DataDiff = DataDiff
+  { ddAdds          :: Map.Map T.Text CidBytes
+    -- ^ Leaves present in the new tree but absent from the old tree.
+  , ddUpdates       :: Map.Map T.Text (CidBytes, CidBytes)
+    -- ^ Leaves present in both trees with changed CIDs: key -> (old, new).
+  , ddDeletes       :: Map.Map T.Text CidBytes
+    -- ^ Leaves present in the old tree but absent from the new tree.
+  , ddNewBlocks     :: BlockMap
+    -- ^ New internal MST node blocks (present in new tree, absent from old).
+  , ddRemovedBlocks :: Set.Set CidBytes
+    -- ^ Internal MST node CIDs present in the old tree but not in the new tree.
+  } deriving (Eq, Show)
 
 -- ---------------------------------------------------------------------------
 -- Record operation (for proof verification)
@@ -342,6 +370,121 @@ computeDiff olds@((ok, ov):ot) news@((nk, nv):nt)
   | ok <  nk             = WDelete ok ov    : computeDiff ot news
   | otherwise            = WCreate nk nv    : computeDiff olds nt
 
+-- | Compute a structured diff between two MST states using the zipper
+-- interface, co-iterating leaves in sorted order without flattening.
+--
+-- 'Nothing' for the old tree means an empty tree: all leaves in @new@ are
+-- treated as additions.
+--
+-- Block tracking is done lazily: unchanged subtrees (identified by equal
+-- CIDs) are skipped entirely, and node bytes are serialised only for MST
+-- nodes that are genuinely new.
+--
+-- The leaf co-iteration is a single tail-recursive pass over a 'DataDiff'
+-- accumulator.  The block-level fields ('ddNewBlocks', 'ddRemovedCids') are
+-- pre-computed and placed in the initial accumulator, so the worker 'go' is
+-- the single function that fills every field.
+zipperDiff :: Maybe MST -> MST -> DataDiff
+zipperDiff mOld new =
+  let initDiff = DataDiff
+        { ddAdds        = Map.empty
+        , ddUpdates     = Map.empty
+        , ddDeletes     = Map.empty
+        , ddNewBlocks   = Map.empty
+        , ddRemovedBlocks = Set.empty
+        }
+      oldStart = (\old -> MSTZipper (SubTree old) []) <$> mOld
+      newStart = MSTZipper (SubTree new) []
+  in go oldStart (Just newStart) initDiff
+  where
+    go :: Maybe MSTZipper -> Maybe MSTZipper -> DataDiff -> DataDiff
+
+    -- Both exhausted: done.
+    go Nothing Nothing acc = acc
+
+    -- Old exhausted: all remaining new leaves are additions.
+    go Nothing (Just nz) acc =
+      case zFocus nz of
+        Leaf nk nv ->
+          go Nothing (advance nz)
+            acc { ddAdds = Map.insert nk nv (ddAdds acc) }
+        SubTree mst  ->
+          go Nothing (advance nz) (nodeAdd mst acc)
+
+    -- New exhausted: all remaining old leaves are deletions.
+    go (Just oz) Nothing acc =
+      case zFocus oz of
+        Leaf ok ov ->
+          go (advance oz) Nothing acc
+            { ddDeletes = Map.insert ok ov (ddDeletes acc) }
+        SubTree (MST cid _) ->
+          go (advance oz) Nothing acc
+            { ddRemovedBlocks = Set.insert cid (ddRemovedBlocks acc) }
+
+    -- Both active: compare current leaves.
+    go (Just oz) (Just nz) acc =
+      case (zFocus oz, zFocus nz) of
+        (Leaf ok ov, Leaf nk nv)
+          | ok == nk && ov == nv ->
+              -- Identical: no change; new leaf CID is still live.
+              go (advance oz) (advance nz) acc
+          | ok == nk ->
+              -- Same key, different CID: update.
+              go (advance oz) (advance nz) acc
+                { ddUpdates = Map.insert ok (ov, nv) (ddUpdates acc) }
+          | ok < nk ->
+              -- Old key has no counterpart in new: deletion.
+              go (advance oz) (Just nz) acc
+                { ddDeletes = Map.insert ok ov (ddDeletes acc) }
+          | otherwise ->
+              -- New key has no counterpart in old: addition.
+              go (Just oz) (advance nz) acc
+                { ddAdds    = Map.insert nk nv (ddAdds acc) }
+
+        (Leaf {}, SubTree mst) ->
+          -- Step into the subtree to try and find the leaf
+          go (Just oz) (advance nz) (nodeAdd mst acc)
+
+        (SubTree mst, Leaf {}) ->
+          -- Step into the subtree to try and find the leaf
+          go (advance oz) (Just nz) (nodeRemove mst acc)
+
+        (SubTree oldMst@(MST oldCid _), SubTree newMst@(MST newCid newEntries))
+          -- Identical subtree, move to next sibling
+          | oldCid == newCid ->
+            go (stepOver oz) (stepOver nz) acc
+
+          -- Different nodes, if the new is a spine
+          | nodeLayer oldMst > nodeLayer newMst ->
+            go (stepInto oz) (Just nz) (nodeRemove oldMst acc)
+
+          -- Different nodes, if the old is a spine
+          | nodeLayer oldMst < nodeLayer newMst ->
+            go (Just oz) (stepInto nz) (nodeAdd newMst acc)
+
+          -- Same layer
+          | otherwise ->
+            let bytes = encodeNode (toNodeData newEntries) in
+            go (stepInto oz) (stepInto nz) acc
+              { ddRemovedBlocks = Set.insert oldCid (ddRemovedBlocks acc)
+              , ddNewBlocks = Map.insert newCid bytes (ddNewBlocks acc)
+              }
+
+    -- Handle edge case when there are pure spine nodes which
+    -- have been trimmed.
+    nodeAdd (MST cid entries) acc =
+      if Set.member cid (ddRemovedBlocks acc) then
+        acc { ddRemovedBlocks = Set.delete cid (ddRemovedBlocks acc) }
+      else
+        let bytes = encodeNode (toNodeData entries)
+        in acc { ddNewBlocks = Map.insert cid bytes (ddNewBlocks acc) }
+
+    nodeRemove (MST cid _) acc =
+      if Map.member cid (ddNewBlocks acc) then
+        acc { ddNewBlocks = Map.delete cid (ddNewBlocks acc) }
+      else
+        acc { ddRemovedBlocks = Set.insert cid (ddRemovedBlocks acc) }
+
 -- ---------------------------------------------------------------------------
 -- Proof verification
 -- ---------------------------------------------------------------------------
@@ -532,6 +675,7 @@ wrapToLayer targetLayer mst
   | nodeLayer mst >= targetLayer = mst
   | otherwise                    = wrapToLayer targetLayer (makeMST [SubTree mst])
 
+
 -- | Compute the layer of an MST node.
 --
 -- The layer of a node equals the leading-zero count of any of its leaf keys;
@@ -664,6 +808,28 @@ nextLeaf z = case nextSibling z of
   Nothing ->
     up z >>= nextLeaf
 
+
+stepOver :: MSTZipper -> Maybe MSTZipper
+stepOver z =
+  nextSibling z <|> (up z >>= stepOver)
+
+stepInto :: MSTZipper -> Maybe MSTZipper
+stepInto = down 0
+
+-- | Advance the zipper to the next leaf in in-order (sorted-key) traversal.
+--
+-- The algorithm is:
+--
+--  1. Move to the next sibling.
+--  2. If the sibling is a 'Leaf', we are done.
+--  3. If the sibling is a 'SubTree', descend to its first leaf.
+--  4. If there is no next sibling, go up one level and repeat.
+--  5. When the root is reached with no next sibling, the traversal is
+--     exhausted.
+advance :: MSTZipper -> Maybe MSTZipper
+advance z = stepInto z <|> stepOver z
+
+
 -- ---------------------------------------------------------------------------
 -- Shared helper (used by both delete and the zipper)
 -- ---------------------------------------------------------------------------
@@ -680,3 +846,49 @@ mergeSubtrees (MST _ left) (MST _ right) =
       in makeMST (reverseOnto (SubTree newMiddle : rs) ls)
     (ls, rs) ->
       makeMST (reverseOnto rs ls)
+
+
+------------------------------------------------------------------------
+-- Pretty Printing
+
+--
+-- Rendering implementation based on the one from Hedgehog
+--
+
+-- | Render an MST's structure.
+--
+render :: MST -> String
+render =
+  unlines . renderTreeMstLines
+
+renderTreeMstLines ::MST -> [String]
+renderTreeMstLines (MST cid entries) = do
+  let xs = renderForestLines entries
+  lines (renderNodeT cid) ++ xs
+
+renderNodeT :: CidBytes -> String
+renderNodeT cid =
+  T.unpack (cidToText cid)
+
+renderNodeEntry :: NodeEntry -> [String]
+renderNodeEntry (Leaf key _) = [T.unpack key]
+renderNodeEntry (SubTree mst) = renderTreeMstLines mst
+
+renderForestLines :: [NodeEntry] -> [String]
+renderForestLines xs0 =
+  let
+    shift hd other =
+      zipWith (++) (hd : repeat other)
+  in
+    case xs0 of
+      [] ->
+        pure []
+
+      [x] -> do
+        let s = renderNodeEntry x
+        shift " └╼ " "   " s
+
+      x : xs -> do
+        let s = renderNodeEntry x
+            ss = renderForestLines xs
+        shift " ├╼ " " │  " s ++ ss
