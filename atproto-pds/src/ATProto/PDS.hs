@@ -11,6 +11,7 @@
 -- @
 -- import ATProto.PDS.Storage      -- BlockStore, RepoStore
 -- import ATProto.PDS.ActorStore   -- ActorStore, ActorStoreBackend
+-- import ATProto.PDS.AccountStore -- AccountStore typeclass
 -- import ATProto.PDS.Repo
 -- @
 module ATProto.PDS
@@ -25,6 +26,11 @@ module ATProto.PDS
   , module ATProto.PDS.Commit
     -- * Repository operations
   , module ATProto.PDS.Repo
+    -- * Account store typeclass
+  , module ATProto.PDS.AccountStore
+    -- * Account store backends
+  , module ATProto.PDS.AccountStore.InMemory
+  , module ATProto.PDS.AccountStore.FileSystem
   ) where
 
 import ATProto.PDS.Storage
@@ -33,3 +39,6 @@ import ATProto.PDS.Storage.InMemory
 import ATProto.PDS.Storage.FileSystem
 import ATProto.PDS.Commit
 import ATProto.PDS.Repo
+import ATProto.PDS.AccountStore
+import ATProto.PDS.AccountStore.InMemory
+import ATProto.PDS.AccountStore.FileSystem
