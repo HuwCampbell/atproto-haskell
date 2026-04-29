@@ -1,4 +1,5 @@
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE InstanceSigs #-}
 -- | In-memory storage backend.
 --
 -- Uses 'IORef'-wrapped 'Data.Map.Strict.Map's.  Suitable for tests and
@@ -48,7 +49,7 @@ data InMemoryActorStore = InMemoryActorStore
 instance BlockStore InMemoryActorStore where
   getBlock s cid    = liftIO $ Map.lookup cid <$> readIORef (imasBlocks s)
   putBlock s cid bs = liftIO $ modifyIORef' (imasBlocks s) (Map.insert cid bs)
-
+  deleteBlock s cid = liftIO $ modifyIORef' (imasBlocks s) (Map.delete cid)
 -- | The 'RepoStore' instance has no DID parameter; this store is already
 --   scoped to a single actor by 'InMemoryBackend'.
 instance RepoStore InMemoryActorStore where

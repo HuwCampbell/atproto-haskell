@@ -46,9 +46,9 @@ module ATProto.PDS.Repo
 
 import qualified Data.ByteString      as BS
 import qualified Data.ByteString.Lazy as BL
-import qualified Data.List            as List
+import           Data.Foldable        (traverse_)
 import qualified Data.Map.Strict      as Map
-import Data.Maybe                     (mapMaybe, maybeToList, fromMaybe)
+import           Data.Maybe           (mapMaybe, maybeToList, fromMaybe)
 import qualified Data.Text            as T
 import qualified Codec.CBOR.Decoding  as D
 import qualified Codec.CBOR.Read      as R
@@ -58,12 +58,12 @@ import ATProto.Car.BlockMap  (BlockMap)
 import ATProto.Car.DagCbor   (decodeCidTag42, skipValue)
 import ATProto.Car.Parser    (readCarWithRoot, CarError (..))
 import ATProto.Car.Writer    (writeCarWithRoot)
-import ATProto.MST.Build     (buildMST)
-import ATProto.MST.Tree      (WriteDescr (..))
+
 import ATProto.MST.Encode    (encodeNode)
 import ATProto.MST.Get       (get)
 import ATProto.MST.Node      (NodeData (..), TreeEntry (..), decodeNode)
 import ATProto.MST.Types     (MstError (..))
+import ATProto.MST.Tree      (DataDiff(..))
 import ATProto.Crypto.Types  (PrivKey)
 import ATProto.Syntax.DID    (unDID)
 import ATProto.Syntax.TID    (tidNow, unTID)
@@ -251,77 +251,65 @@ applyWrites store key ops = do
       r <- loadCommitData s headCid
       case r of
         Left err -> return (Left err)
-        Right (dataRoot, mstBlocks) -> do
-          -- Get current entries from the MST.
-          case MST.toList <$> MST.fromBlockMap mstBlocks dataRoot of
+        Right (dataRoot, mstBlocks) ->
+          -- Load old MST – this is too eager, it loads the whole thing.
+          case MST.fromBlockMap mstBlocks dataRoot of
             Left mstErr  -> return (Left (mapMstError mstErr))
-            Right currentEntries -> do
-              -- Apply the write operations.
-              result <- applyOps s currentEntries ops
-              case result of
-                Left err -> return (Left err)
-                Right newEntries -> do
-                  -- Build new MST from the updated entry list.
-                  let (mNewRoot, newMstBlocks) = buildMST (List.sortBy (\a b -> compare (fst a) (fst b)) newEntries)
+            Right oldMst -> do
+              -- Build new MST by applying the write operations
+              let (newMst, newRecords) = applyOps oldMst ops
+              -- Do an efficient diff to determine what we need to commit
+              -- to storage.
+              let dataDiff = MST.zipperDiff (Just oldMst) newMst
 
-                  -- Handle empty MST case.
-                  newDataRoot <- case mNewRoot of
-                    Just root -> do
-                      root <$ Map.traverseWithKey (putBlock s) newMstBlocks
-                    Nothing -> do
-                      -- Empty MST: create an explicit empty node.
-                      let emptyNode  = NodeData Nothing []
-                          emptyBytes = encodeNode emptyNode
-                          emptyRoot  = cidForDagCbor emptyBytes
-                      putBlock s emptyRoot emptyBytes
-                      return emptyRoot
+              -- Commit is all to storage
+              _ <- Map.traverseWithKey (putBlock s) (ddNewBlocks dataDiff)
+              _ <- Map.traverseWithKey (putBlock s) newRecords
 
-                  -- Create and store the new commit.
-                  rev <- unTID <$> tidNow
-                  (commitCid, commitBytes) <-
-                    createSignedCommit (unDID did) key rev (Just headCid) newDataRoot
-                  putBlock s commitCid commitBytes
-                  setRepoHead s commitCid
-                  return (Right commitCid)
+              traverse_ (deleteBlock s) (ddRemovedBlocks dataDiff)
+              traverse_ (deleteBlock s) (ddDeletes dataDiff)
+
+              -- Create and store the new commit.
+              rev <- unTID <$> tidNow
+              (commitCid, commitBytes) <-
+                createSignedCommit (unDID did) key rev (Just headCid) (MST.mstCid newMst)
+              putBlock s commitCid commitBytes
+              setRepoHead s commitCid
+              return (Right commitCid)
 
 -- ---------------------------------------------------------------------------
 -- Helpers
 -- ---------------------------------------------------------------------------
 
--- | Apply a list of write operations to the current entry list.
+-- | Apply Operations, and return a BlockMap of records entries
 applyOps
-  :: BlockStore s
-  => s
-  -> [(T.Text, CidBytes)]   -- ^ current entries
+  :: MST.MST   -- ^ current entries
   -> [WriteOp]
-  -> IO (Either PdsError [(T.Text, CidBytes)])
-applyOps s = go
+  -> (MST.MST, BlockMap)
+applyOps initial = foldl step (initial, Map.empty)
   where
-    go entries [] = return (Right entries)
-    go entries (op:rest) =
+    step (mst, acc) op =
+      let (newMst, mOP) = applyOp mst op
+      in (newMst, maybe id (uncurry Map.insert) mOP acc)
+
+    applyOp
+      :: MST.MST   -- ^ current entries
+      -> WriteOp
+      -> (MST.MST, Maybe (CidBytes, BS.ByteString))
+    applyOp mst op =
       case op of
-        Create col rk recordBytes -> do
+        Create col rk recordBytes ->
           let mstKey = col <> "/" <> rk
-          case lookup mstKey entries of
-            Just _  -> return (Left (PdsRecordExists mstKey))
-            Nothing -> do
-              let recCid = cidForDagCbor recordBytes
-              putBlock s recCid recordBytes
-              go (entries ++ [(mstKey, recCid)]) rest
-
-        Update col rk recordBytes -> do
-          let mstKey = col <> "/" <> rk
-              withoutOld = filter (\(k, _) -> k /= mstKey) entries
               recCid = cidForDagCbor recordBytes
-          putBlock s recCid recordBytes
-          go (withoutOld ++ [(mstKey, recCid)]) rest
-
-        Delete col rk -> do
+          in (MST.insert mstKey recCid mst, Just (recCid, recordBytes))
+        Update col rk recordBytes ->
           let mstKey = col <> "/" <> rk
-          case lookup mstKey entries of
-            Nothing -> return (Left (PdsRecordNotFound mstKey))
-            Just _  ->
-              go (filter (\(k, _) -> k /= mstKey) entries) rest
+              recCid = cidForDagCbor recordBytes
+          in (MST.insert mstKey recCid mst, Just (recCid, recordBytes))
+
+        Delete col rk ->
+          let mstKey = col <> "/" <> rk
+          in (MST.delete mstKey mst, Nothing)
 
 -- | Load the commit's data root CID and all MST blocks.
 loadCommitData

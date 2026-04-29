@@ -38,6 +38,9 @@ class BlockStore s where
   -- | Store a block under its CID.  Storing the same CID twice
   --   is idempotent.
   putBlock :: MonadIO m => s -> CidBytes -> BS.ByteString -> m ()
+  -- | Store a block under its CID.  Storing the same CID twice
+  --   is idempotent.
+  deleteBlock :: MonadIO m => s -> CidBytes -> m ()
 
 -- | Repository head pointer.
 --

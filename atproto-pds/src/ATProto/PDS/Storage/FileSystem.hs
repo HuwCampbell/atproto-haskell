@@ -78,6 +78,10 @@ instance BlockStore FileActorStore where
     liftIO $
       BS.writeFile (fasBlockDir s </> T.unpack (cidToText cid)) bs
 
+  deleteBlock s cid =
+    liftIO $
+      removeFile (fasBlockDir s </> T.unpack (cidToText cid))
+
 -- | The 'RepoStore' instance has no DID parameter; this store is already
 --   scoped to a single actor by 'FileBackend'.
 instance RepoStore FileActorStore where

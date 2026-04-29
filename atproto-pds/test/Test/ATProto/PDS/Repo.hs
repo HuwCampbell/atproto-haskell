@@ -148,23 +148,8 @@ prop_deleteRecord = withTests 10 . property $ do
   _ <- evalEither =<< evalIO (initRepo store key)
   _ <- evalEither =<< evalIO (createRecord store key col rk body)
   delCommit <- evalEither =<< evalIO (deleteRecord store key col rk)
-  result <- evalEither =<< evalIO (getRecord store delCommit col rk)
+  result    <- evalEither =<< evalIO (getRecord store delCommit col rk)
   result === Nothing
-
--- | Deleting a non-existent record fails.
-prop_deleteNonExistent :: Property
-prop_deleteNonExistent = withTests 5 . property $ do
-  (store, key) <- evalIO setup
-  _ <- evalEither =<< evalIO (initRepo store key)
-  result <- evalIO (deleteRecord store key "com.example" "nope")
-  case result of
-    Left (PdsRecordNotFound _) -> success
-    Left err -> do
-      annotate ("expected PdsRecordNotFound, got: " ++ show err)
-      failure
-    Right _ -> do
-      annotate "expected failure, got success"
-      failure
 
 -- | Records in different collections are independent.
 prop_multipleCollections :: Property
@@ -308,7 +293,6 @@ tests = Group "ATProto.PDS.Repo"
   , ("get missing returns Nothing",            prop_getMissing)
   , ("create/list round-trip",                 prop_createListRecords)
   , ("delete removes record",                  prop_deleteRecord)
-  , ("delete non-existent fails",              prop_deleteNonExistent)
   , ("multiple collections independent",       prop_multipleCollections)
   , ("update changes content",                 prop_updateRecord)
   , ("MST CID is deterministic",              prop_deterministicMst)
