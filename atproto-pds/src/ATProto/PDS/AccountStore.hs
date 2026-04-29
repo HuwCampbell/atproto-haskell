@@ -14,6 +14,19 @@
 -- backends that do not use @did:plc@ can store and retrieve them using
 -- the same interface, or simply always return 'Nothing'.
 --
+-- = Session tokens
+--
+-- Session tokens are __self-describing__: they are produced by
+-- 'makeSessionToken', which uses 'Web.ClientSession' to AES-encrypt the
+-- actor's DID into the token itself.  Verifying a token ('verifySessionToken')
+-- is therefore a pure decryption step — no database or file scan is needed.
+-- This scales to any number of concurrent users without degrading.
+--
+-- Each backend stores a single symmetric 'Key' (accessible via
+-- 'getSessionKey').  The file-system backend persists the key to
+-- @basedir\/session.key@; the in-memory backend generates a fresh key at
+-- construction time.
+--
 -- = Pattern
 --
 -- The design follows the same typeclass-per-capability pattern as
@@ -28,8 +41,9 @@ module ATProto.PDS.AccountStore
     -- * Password helpers
   , hashPassword
   , checkPassword
-    -- * Token helper
-  , generateToken
+    -- * Session token helpers
+  , makeSessionToken
+  , verifySessionToken
     -- * Typeclass
   , AccountStore (..)
   ) where
@@ -42,10 +56,10 @@ import qualified Data.Text.Encoding     as TE
 import           Data.Time.Clock        (UTCTime)
 
 import qualified Crypto.KDF.BCrypt      as BCrypt
-import           Crypto.Random          (getRandomBytes)
+import           Web.ClientSession      (Key, encryptIO, decrypt)
 
 import           ATProto.Crypto.Types   (PrivKey)
-import           ATProto.Syntax.DID     (DID)
+import           ATProto.Syntax.DID     (DID, parseDID, unDID)
 import           ATProto.Syntax.Handle  (Handle)
 
 -- ---------------------------------------------------------------------------
@@ -68,21 +82,23 @@ data Account = Account
 
 -- | A session token pair issued at login.
 --
--- Access tokens are short-lived; refresh tokens are longer-lived and can
--- be exchanged for a new 'Session'.
+-- Both tokens are produced by 'makeSessionToken': they are
+-- 'Web.ClientSession'-encrypted blobs that encode the actor's DID.
+-- Verifying a token requires only the symmetric 'Key' from the store
+-- (via 'getSessionKey') — no global list is consulted.
 data Session = Session
   { sessionDid        :: !DID
     -- ^ The DID this session belongs to.
   , sessionAccessJwt  :: !T.Text
-    -- ^ Short-lived access token (opaque bearer token in the simple impl).
+    -- ^ Short-lived access token (clientsession-encrypted DID).
   , sessionRefreshJwt :: !T.Text
-    -- ^ Longer-lived refresh token.
+    -- ^ Longer-lived refresh token (clientsession-encrypted DID).
   } deriving (Eq, Show)
 
 -- | An opaque password hash produced by 'hashPassword'.
 --
--- Encoded as @\<salt-b64\>$\<iterations\>$\<hash-b64\>@ so it can be
--- round-tripped through a plain text file without extra serialisation.
+-- Encoded as bcrypt output base64, so it can be round-tripped through a
+-- plain-text file without extra serialisation.
 newtype PasswordHash = PasswordHash { unPasswordHash :: T.Text }
   deriving (Eq, Show)
 
@@ -90,47 +106,53 @@ newtype PasswordHash = PasswordHash { unPasswordHash :: T.Text }
 -- Password helpers
 -- ---------------------------------------------------------------------------
 
--- | Number of PBKDF2 iterations used for password hashing.
+-- | bcrypt cost factor used for password hashing.
 bcryptCost :: Int
 bcryptCost = 10
 
--- | Hash a plaintext password for storage.
---
--- Uses PBKDF2-SHA256 with a 16-byte cryptographically random salt and
--- 'pbkdf2Iterations' iterations.  The returned 'PasswordHash' encodes
--- salt, iteration count, and derived key, so 'checkPassword' needs only
--- the hash — not the original salt.
+-- | Hash a plaintext password for storage using bcrypt.
 hashPassword :: T.Text -> IO PasswordHash
 hashPassword pwd = do
   raw :: BS.ByteString <- BCrypt.hashPassword bcryptCost (TE.encodeUtf8 pwd)
   return (PasswordHash (TE.decodeUtf8 (BAE.convertToBase BAE.Base64 raw)))
 
-
 -- | Verify a plaintext password against a stored 'PasswordHash'.
 --
--- Returns 'True' if and only if the password matches.  Uses a
--- constant-time comparison to prevent timing side-channels.
+-- Returns 'True' if and only if the password matches.
 checkPassword :: T.Text -> PasswordHash -> Bool
 checkPassword pwd (PasswordHash encoded) =
   let raw :: Either String BS.ByteString
       raw = BAE.convertFromBase BAE.Base64 (TE.encodeUtf8 encoded)
   in case raw of
-    Left _ -> False
+    Left _  -> False
     Right x -> BCrypt.validatePassword (TE.encodeUtf8 pwd) x
 
-
 -- ---------------------------------------------------------------------------
--- Token helper
+-- Session token helpers
 -- ---------------------------------------------------------------------------
 
--- | Generate a cryptographically random opaque bearer token.
+-- | Create a 'Web.ClientSession'-encrypted token that encodes the given DID.
 --
--- Produces 32 bytes from a cryptographically secure random source,
--- encoded as base64, giving a 44-character token.
-generateToken :: IO T.Text
-generateToken = do
-  bytes <- getRandomBytes 32 :: IO BS.ByteString
-  return (TE.decodeUtf8 (BAE.convertToBase BAE.Base64 bytes :: BS.ByteString))
+-- The token is an AES-encrypted, HMAC-authenticated ciphertext produced by
+-- 'Web.ClientSession.encryptIO'.  Because the DID is embedded in the token,
+-- no server-side session table is needed for verification.
+makeSessionToken :: Key -> DID -> IO T.Text
+makeSessionToken key did = do
+  ct <- encryptIO key (TE.encodeUtf8 (unDID did))
+  return (TE.decodeUtf8 ct)
+
+-- | Decrypt a session token and return the embedded 'DID'.
+--
+-- Returns 'Nothing' if the token is malformed, tampered with, or was not
+-- produced by 'makeSessionToken' with the same 'Key'.
+verifySessionToken :: Key -> T.Text -> Maybe DID
+verifySessionToken key token =
+  case decrypt key (TE.encodeUtf8 token) of
+    Nothing -> Nothing
+    Just bs ->
+      case parseDID (TE.decodeUtf8 bs) of
+        Right did -> Just did
+        Left _    -> Nothing
 
 -- ---------------------------------------------------------------------------
 -- Typeclass
@@ -138,17 +160,23 @@ generateToken = do
 
 -- | Abstraction over account persistence backends.
 --
--- Backends must implement all methods.  The in-memory and file-system
--- backends provided in sub-modules are suitable for development and
--- simple deployments.
+-- Backends must implement 'createAccount', 'getAccount', 'updateAccount',
+-- 'deleteAccount', 'storePassword', 'getPasswordHash', 'getSigningKey',
+-- 'storePlcRotationKey', 'getPlcRotationKey', and 'getSessionKey'.
+--
+-- The session methods ('storeSession', 'getSession', 'deleteSession') have
+-- default implementations built on 'getSessionKey' that require __no__
+-- server-side session storage: 'getSession' decrypts the token to recover
+-- the DID, and 'storeSession' \/ 'deleteSession' are no-ops.  Override
+-- them only if you need a revocation denylist or other extra bookkeeping.
 --
 -- = Invariants
 --
 -- * 'createAccount' stores the account unconditionally; calling it twice
 --   with the same DID replaces the first entry.
 -- * 'getAccount' returns 'Nothing' for unknown DIDs.
--- * 'storeSession' / 'getSession' are keyed on the __access__ token
---   ('sessionAccessJwt').
+-- * 'getSession' verifies the token and looks up the account; it returns
+--   'Nothing' for unknown DIDs even if the token is cryptographically valid.
 class AccountStore s where
   -- | Persist a new account.
   --
@@ -207,26 +235,62 @@ class AccountStore s where
     -> DID
     -> m (Maybe PrivKey)
 
-  -- | Store an active session.
+  -- | Get the symmetric key used to produce and verify session tokens.
+  --
+  -- Tokens produced by 'makeSessionToken' with this key can be verified
+  -- with 'verifySessionToken' — no session table is consulted.
+  getSessionKey
+    :: MonadIO m
+    => s
+    -> m Key
+
+  -- | Record an active session.
+  --
+  -- The default implementation is a no-op: because tokens produced by
+  -- 'makeSessionToken' are self-describing, no server-side session list
+  -- is needed.  Override only if you need a revocation denylist.
   storeSession
     :: MonadIO m
     => s
     -> Session
     -> m ()
+  storeSession _ _ = return ()
 
   -- | Look up a session by its access token.
+  --
+  -- The default implementation decrypts the token with 'getSessionKey'
+  -- to recover the DID, then calls 'getAccount' to confirm the account
+  -- still exists.  Returns 'Nothing' if the token is invalid or the
+  -- account has been deleted.
   getSession
     :: MonadIO m
     => s
-    -> T.Text     -- ^ Access JWT / token
+    -> T.Text     -- ^ Access token
     -> m (Maybe Session)
+  getSession s token = do
+    key <- getSessionKey s
+    case verifySessionToken key token of
+      Nothing  -> return Nothing
+      Just did -> do
+        mAcc <- getAccount s did
+        case mAcc of
+          Nothing -> return Nothing
+          Just _  -> return $ Just Session
+            { sessionDid       = did
+            , sessionAccessJwt = token
+            , sessionRefreshJwt = ""
+            }
 
   -- | Revoke a session by its access token.
+  --
+  -- The default implementation is a no-op: with clientsession tokens the
+  -- client simply discards the token.  Override to maintain a denylist.
   deleteSession
     :: MonadIO m
     => s
-    -> T.Text     -- ^ Access JWT / token
+    -> T.Text     -- ^ Access token
     -> m ()
+  deleteSession _ _ = return ()
 
   -- | Store a PLC rotation key for a DID.
   --

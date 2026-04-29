@@ -5,7 +5,6 @@ import           Hedgehog
 import qualified Hedgehog.Gen               as Gen
 import qualified Hedgehog.Range             as Range
 
-import qualified Data.Text                  as T
 import           Data.Time.Clock            (getCurrentTime)
 import           System.Directory           (removeDirectoryRecursive,
                                              doesDirectoryExist,
@@ -21,13 +20,6 @@ import           ATProto.PDS.AccountStore
 import           ATProto.PDS.AccountStore.InMemory   (newInMemoryAccountStore)
 import           ATProto.PDS.AccountStore.FileSystem (FileAccountStore,
                                                       newFileAccountStore)
-
--- ---------------------------------------------------------------------------
--- Generators
--- ---------------------------------------------------------------------------
-
-genToken :: Gen T.Text
-genToken = Gen.text (Range.linear 20 40) Gen.alphaNum
 
 -- ---------------------------------------------------------------------------
 -- Shared fixtures
@@ -51,7 +43,7 @@ makeAccount did = do
     }
 
 -- ---------------------------------------------------------------------------
--- Generic property parametrised over a store
+-- Generic properties parametrised over a store
 -- ---------------------------------------------------------------------------
 
 -- | Create an account and retrieve it by DID.
@@ -111,22 +103,32 @@ prop_checkPasswordWrong = withTests 10 . property $ do
     then success   -- skip coincidental equality
     else assert (not (checkPassword bad h))
 
--- | Store, retrieve, and delete a session.
+-- | makeSessionToken + getSession returns the correct DID.
+--
+-- Tokens are clientsession-encrypted blobs; 'getSession' decrypts them to
+-- recover the DID -- no session table is scanned.
 prop_sessionRoundTrip :: AccountStore s => IO s -> Property
 prop_sessionRoundTrip mkStore = withTests 5 . property $ do
-  s     <- evalIO mkStore
-  token <- forAll genToken
-  let sess = Session
-        { sessionDid        = testDID1
-        , sessionAccessJwt  = token
-        , sessionRefreshJwt = "refresh-" <> token
-        }
-  evalIO (storeSession s sess)
+  s   <- evalIO mkStore
+  acc <- evalIO (makeAccount testDID1)
+  (sigKey, _) <- evalIO (generateKeyPair P256)
+  evalIO (createAccount s acc sigKey)
+  sessionKey <- evalIO (getSessionKey s)
+  token  <- evalIO (makeSessionToken sessionKey testDID1)
   result <- evalIO (getSession s token)
-  result === Just sess
-  evalIO (deleteSession s token)
-  after <- evalIO (getSession s token)
-  after === Nothing
+  case result of
+    Nothing   -> do
+      annotate "getSession returned Nothing for a valid token"
+      failure
+    Just sess -> sessionDid sess === testDID1
+
+-- | verifySessionToken rejects arbitrary garbage tokens.
+prop_sessionInvalidToken :: AccountStore s => IO s -> Property
+prop_sessionInvalidToken mkStore = withTests 5 . property $ do
+  s <- evalIO mkStore
+  key <- evalIO (getSessionKey s)
+  bad <- forAll (Gen.text (Range.linear 10 50) Gen.alphaNum)
+  verifySessionToken key bad === Nothing
 
 -- | Store and retrieve a PLC rotation key.
 prop_plcRotationKeyRoundTrip :: AccountStore s => IO s -> Property
@@ -146,12 +148,13 @@ prop_plcRotationKeyRoundTrip mkStore = withTests 5 . property $ do
 
 tests_inMemory :: [(PropertyName, Property)]
 tests_inMemory =
-  [ ("in-memory: create/get",         prop_createGetAccount    (newInMemoryAccountStore))
-  , ("in-memory: get unknown",        prop_getUnknownAccount   (newInMemoryAccountStore))
-  , ("in-memory: delete",             prop_deleteAccount       (newInMemoryAccountStore))
-  , ("in-memory: password round-trip",prop_passwordRoundTrip   (newInMemoryAccountStore))
-  , ("in-memory: session round-trip", prop_sessionRoundTrip    (newInMemoryAccountStore))
-  , ("in-memory: PLC rotation key",   prop_plcRotationKeyRoundTrip (newInMemoryAccountStore))
+  [ ("in-memory: create/get",          prop_createGetAccount        (newInMemoryAccountStore))
+  , ("in-memory: get unknown",         prop_getUnknownAccount       (newInMemoryAccountStore))
+  , ("in-memory: delete",              prop_deleteAccount           (newInMemoryAccountStore))
+  , ("in-memory: password round-trip", prop_passwordRoundTrip       (newInMemoryAccountStore))
+  , ("in-memory: session round-trip",  prop_sessionRoundTrip        (newInMemoryAccountStore))
+  , ("in-memory: invalid token",       prop_sessionInvalidToken     (newInMemoryAccountStore))
+  , ("in-memory: PLC rotation key",    prop_plcRotationKeyRoundTrip (newInMemoryAccountStore))
   ]
 
 -- ---------------------------------------------------------------------------
@@ -168,11 +171,12 @@ setupFileAccountStore = do
 
 tests_fileSystem :: [(PropertyName, Property)]
 tests_fileSystem =
-  [ ("file: create/get",              prop_createGetAccount    setupFileAccountStore)
-  , ("file: get unknown",             prop_getUnknownAccount   setupFileAccountStore)
-  , ("file: delete",                  prop_deleteAccount       setupFileAccountStore)
-  , ("file: password round-trip",     prop_passwordRoundTrip   setupFileAccountStore)
-  , ("file: session round-trip",      prop_sessionRoundTrip    setupFileAccountStore)
+  [ ("file: create/get",              prop_createGetAccount        setupFileAccountStore)
+  , ("file: get unknown",             prop_getUnknownAccount       setupFileAccountStore)
+  , ("file: delete",                  prop_deleteAccount           setupFileAccountStore)
+  , ("file: password round-trip",     prop_passwordRoundTrip       setupFileAccountStore)
+  , ("file: session round-trip",      prop_sessionRoundTrip        setupFileAccountStore)
+  , ("file: invalid token",           prop_sessionInvalidToken     setupFileAccountStore)
   , ("file: PLC rotation key",        prop_plcRotationKeyRoundTrip setupFileAccountStore)
   ]
 

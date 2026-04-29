@@ -5,15 +5,20 @@
 --
 -- @
 -- basedir/
+--   session.key          ← 'Web.ClientSession' symmetric key (binary)
 --   accounts/
 --     \<sanitised-did\>/
 --       account          ← key=value text (handle, email, created_at, deactivated)
 --       signing_key      ← \<curve\>:\<hex-bytes\>
---       password_hash    ← salt$iters$hash  (from 'PasswordHash')
+--       password_hash    ← bcrypt hash, base64-encoded
 --       plc_rotation_key ← \<curve\>:\<hex-bytes\>, optional
---   sessions/
---     \<sanitised-token\> ← DID on line 1, refresh token on line 2
 -- @
+--
+-- Session tokens are __self-describing__: they are AES-encrypted blobs
+-- produced by 'makeSessionToken' (via 'Web.ClientSession') that embed the
+-- actor's DID.  No per-session files are written; 'getSession' simply
+-- decrypts the token to recover the DID.  The symmetric key is persisted
+-- in @basedir\/session.key@ so tokens remain valid across process restarts.
 --
 -- Create a store with 'newFileAccountStore':
 --
@@ -36,11 +41,13 @@ import           Data.Word              (Word8)
 import           Numeric                (readHex)
 import           System.Directory       (createDirectoryIfMissing,
                                          doesDirectoryExist, doesFileExist,
-                                         removeDirectoryRecursive, removeFile)
+                                         removeDirectoryRecursive)
 import           System.FilePath        ((</>))
 
+import           Web.ClientSession      (Key, getKey)
+
 import           ATProto.Crypto.Types   (Curve (..), PrivKey (..))
-import           ATProto.Syntax.DID     (DID, parseDID, unDID)
+import           ATProto.Syntax.DID     (DID, unDID)
 import           ATProto.Syntax.Handle  (parseHandle, unHandle)
 import           ATProto.PDS.AccountStore
 
@@ -49,18 +56,24 @@ import           ATProto.PDS.AccountStore
 -- ---------------------------------------------------------------------------
 
 -- | A file-system-backed account store rooted at a base directory.
-newtype FileAccountStore = FileAccountStore
-  { fasBaseDir :: FilePath }
+data FileAccountStore = FileAccountStore
+  { fasBaseDir    :: FilePath
+  , fasSessionKey :: Key
+    -- ^ Symmetric key for clientsession tokens, loaded from @basedir\/session.key@.
+  }
 
 -- | Create a 'FileAccountStore' rooted at @basedir@.
 --
--- Creates @basedir\/accounts\/@ and @basedir\/sessions\/@ if they do not
--- already exist.
+-- Creates @basedir\/accounts\/@ if it does not already exist and loads (or
+-- creates) the session key from @basedir\/session.key@.
 newFileAccountStore :: FilePath -> IO FileAccountStore
 newFileAccountStore basedir = do
   createDirectoryIfMissing True (basedir </> "accounts")
-  createDirectoryIfMissing True (basedir </> "sessions")
-  return (FileAccountStore basedir)
+  key <- getKey (basedir </> "session.key")
+  return FileAccountStore
+    { fasBaseDir    = basedir
+    , fasSessionKey = key
+    }
 
 -- ---------------------------------------------------------------------------
 -- Path helpers
@@ -69,16 +82,9 @@ newFileAccountStore basedir = do
 accountDir :: FileAccountStore -> DID -> FilePath
 accountDir s did = fasBaseDir s </> "accounts" </> sanitiseDID did
 
-sessionFile :: FileAccountStore -> T.Text -> FilePath
-sessionFile s token = fasBaseDir s </> "sessions" </> T.unpack (sanitiseToken token)
-
 -- | Replace @:@ with @_@ to make a DID safe as a directory name.
 sanitiseDID :: DID -> FilePath
 sanitiseDID = T.unpack . T.map (\c -> if c == ':' then '_' else c) . unDID
-
--- | Replace characters that are unsafe in filenames with @-@.
-sanitiseToken :: T.Text -> T.Text
-sanitiseToken = T.map (\c -> if c `elem` ("/\\:*?\"<>|" :: String) then '-' else c)
 
 -- ---------------------------------------------------------------------------
 -- AccountStore instance
@@ -130,35 +136,8 @@ instance AccountStore FileAccountStore where
       then return Nothing
       else decodeKey <$> readFile path
 
-  storeSession s sess = liftIO $
-    writeFile (sessionFile s (sessionAccessJwt sess))
-      ( T.unpack (unDID (sessionDid sess))
-     ++ "\n"
-     ++ T.unpack (sessionRefreshJwt sess)
-      )
-
-  getSession s token = liftIO $ do
-    let path = sessionFile s token
-    exists <- doesFileExist path
-    if not exists
-      then return Nothing
-      else do
-        content <- readFile path
-        case lines content of
-          (didStr : refreshStr : _) ->
-            case parseDID (T.pack didStr) of
-              Right did -> return $ Just Session
-                { sessionDid        = did
-                , sessionAccessJwt  = token
-                , sessionRefreshJwt = T.pack refreshStr
-                }
-              Left _ -> return Nothing
-          _ -> return Nothing
-
-  deleteSession s token = liftIO $ do
-    let path = sessionFile s token
-    exists <- doesFileExist path
-    when exists $ removeFile path
+  -- | Return the session key loaded from @basedir\/session.key@.
+  getSessionKey s = return (fasSessionKey s)
 
   storePlcRotationKey s did key = liftIO $ do
     let dir = accountDir s did
