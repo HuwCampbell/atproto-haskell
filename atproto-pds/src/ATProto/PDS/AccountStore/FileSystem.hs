@@ -10,7 +10,7 @@
 --     \<sanitised-did\>/
 --       account          ← key=value text (handle, email, created_at, deactivated)
 --       signing_key      ← \<curve\>:\<hex-bytes\>
---       password_hash    ← bcrypt hash, base64-encoded
+--       password_hash    ← standard bcrypt hash (e.g. @$2b$10$...@, 60 chars)
 --       plc_rotation_key ← \<curve\>:\<hex-bytes\>, optional
 -- @
 --

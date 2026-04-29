@@ -262,6 +262,11 @@ class AccountStore s where
   -- to recover the DID, then calls 'getAccount' to confirm the account
   -- still exists.  Returns 'Nothing' if the token is invalid or the
   -- account has been deleted.
+  --
+  -- __Note:__ the default implementation sets 'sessionRefreshJwt' to an
+  -- empty string; callers that need a refresh token should produce one
+  -- separately using 'makeSessionToken' and pass the full 'Session' to
+  -- 'storeSession' (or override this method).
   getSession
     :: MonadIO m
     => s
@@ -276,8 +281,8 @@ class AccountStore s where
         case mAcc of
           Nothing -> return Nothing
           Just _  -> return $ Just Session
-            { sessionDid       = did
-            , sessionAccessJwt = token
+            { sessionDid        = did
+            , sessionAccessJwt  = token
             , sessionRefreshJwt = ""
             }
 
