@@ -56,6 +56,9 @@ module ATProto.MST.Tree
   , up
   , firstLeaf
   , nextLeaf
+  , stepInto
+  , stepOver
+  , advance
 
   -- * Rendering
   , render
@@ -371,20 +374,11 @@ computeDiff olds@((ok, ov):ot) news@((nk, nv):nt)
   | ok <  nk             = WDelete ok ov    : computeDiff ot news
   | otherwise            = WCreate nk nv    : computeDiff olds nt
 
--- | Compute a structured diff between two MST states using the zipper
--- interface, co-iterating leaves in sorted order without flattening.
+
+-- | Compute a structured diff between two MST states.
 --
--- 'Nothing' for the old tree means an empty tree: all leaves in @new@ are
--- treated as additions.
---
--- Block tracking is done lazily: unchanged subtrees (identified by equal
--- CIDs) are skipped entirely, and node bytes are serialised only for MST
--- nodes that are genuinely new.
---
--- The leaf co-iteration is a single tail-recursive pass over a 'DataDiff'
--- accumulator.  The block-level fields ('ddNewBlocks', 'ddRemovedCids') are
--- pre-computed and placed in the initial accumulator, so the worker 'go' is
--- the single function that fills every field.
+--   This function calculates the differences between all leaves and MST
+--   nodes, allowing blocks in storage to be efficiently updated.
 zipperDiff :: Maybe MST -> MST -> DataDiff
 zipperDiff mOld new =
   let initDiff = DataDiff
@@ -492,7 +486,7 @@ zipperDiff mOld new =
 
 -- | Verify that all 'RecordOp's are consistent with the MST.
 --
--- Returns @Right ()@ if every assertion holds, or @Left err@ on the first
+-- Returns @Righadvancet ()@ if every assertion holds, or @Left err@ on the first
 -- mismatch.
 verifyProofs :: MST -> [RecordOp] -> Either MstError ()
 verifyProofs mst = mapM_ checkOp
@@ -793,7 +787,9 @@ firstLeaf z@(MSTZipper (SubTree _) _) = down 0 z >>= firstLeaf
 
 -- | Advance the zipper to the next leaf in in-order (sorted-key) traversal.
 --
--- The algorithm is:
+-- This algorithm assumes that the focus is currently a leaf.
+--
+-- Steps:
 --
 --  1. Move to the next sibling.
 --  2. If the sibling is a 'Leaf', we are done.
@@ -809,24 +805,19 @@ nextLeaf z = case nextSibling z of
   Nothing ->
     up z >>= nextLeaf
 
-
+-- | Step over to the next node (do not step in if it's a tree).
+--
+-- This can backtrack up the tree, to the next siblings of parent
+-- the node.
 stepOver :: MSTZipper -> Maybe MSTZipper
 stepOver z =
   nextSibling z <|> (up z >>= stepOver)
 
+-- | Descend into a subTree, focussed on its first node.
 stepInto :: MSTZipper -> Maybe MSTZipper
 stepInto = down 0
 
--- | Advance the zipper to the next leaf in in-order (sorted-key) traversal.
---
--- The algorithm is:
---
---  1. Move to the next sibling.
---  2. If the sibling is a 'Leaf', we are done.
---  3. If the sibling is a 'SubTree', descend to its first leaf.
---  4. If there is no next sibling, go up one level and repeat.
---  5. When the root is reached with no next sibling, the traversal is
---     exhausted.
+-- | Advance the zipper in the manner of a depth first search.
 advance :: MSTZipper -> Maybe MSTZipper
 advance z = stepInto z <|> stepOver z
 
