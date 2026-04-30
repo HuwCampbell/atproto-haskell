@@ -6,6 +6,7 @@ import qualified Hedgehog.Gen               as Gen
 import qualified Hedgehog.Range             as Range
 
 import           Data.Time.Clock            (getCurrentTime)
+import qualified Data.Text                  as T
 import           System.Directory           (removeDirectoryRecursive,
                                              doesDirectoryExist,
                                              getTemporaryDirectory)
@@ -30,6 +31,9 @@ testDID1 = case parseDID "did:plc:acctest1" of { Right d -> d; Left e -> error e
 
 testHandle1 :: Handle
 testHandle1 = case parseHandle "alice.example.com" of { Right h -> h; Left e -> error e }
+
+testAud :: T.Text
+testAud = "did:plc:pds-service"
 
 makeAccount :: DID -> IO Account
 makeAccount did = do
@@ -103,21 +107,68 @@ prop_checkPasswordWrong = withTests 10 . property $ do
     then success   -- skip coincidental equality
     else assert (not (checkPassword bad h))
 
--- | makeSessionToken round-trips through verifySessionToken.
-prop_tokenRoundTrip :: AccountStore s => IO s -> Property
-prop_tokenRoundTrip mkStore = withTests 5 . property $ do
+-- | createAccessToken + verifyAccessToken returns the correct DID.
+prop_accessTokenRoundTrip :: AccountStore s => IO s -> Property
+prop_accessTokenRoundTrip mkStore = withTests 5 . property $ do
   s   <- evalIO mkStore
-  sessionKey <- evalIO (getSessionKey s)
-  token  <- evalIO (makeSessionToken sessionKey testDID1)
-  verifySessionToken sessionKey token === Just testDID1
+  key <- evalIO (getJwtKey s)
+  tok <- evalIO (createAccessToken key testAud testDID1)
+  result <- evalIO (verifyAccessToken key tok)
+  result === Right testDID1
 
--- | verifySessionToken rejects arbitrary garbage tokens.
-prop_sessionInvalidToken :: AccountStore s => IO s -> Property
-prop_sessionInvalidToken mkStore = withTests 5 . property $ do
-  s <- evalIO mkStore
-  key <- evalIO (getSessionKey s)
+-- | createRefreshToken + verifyRefreshToken returns the correct DID and jti.
+prop_refreshTokenRoundTrip :: AccountStore s => IO s -> Property
+prop_refreshTokenRoundTrip mkStore = withTests 5 . property $ do
+  s   <- evalIO mkStore
+  key <- evalIO (getJwtKey s)
+  (tok, rec) <- evalIO (createRefreshToken key testAud testDID1)
+  result <- evalIO (verifyRefreshToken key tok)
+  result === Right (testDID1, rtrJti rec)
+
+-- | Storing and looking up a refresh token by jti works.
+prop_storeGetRefreshToken :: AccountStore s => IO s -> Property
+prop_storeGetRefreshToken mkStore = withTests 5 . property $ do
+  s   <- evalIO mkStore
+  key <- evalIO (getJwtKey s)
+  (_, rec) <- evalIO (createRefreshToken key testAud testDID1)
+  evalIO (storeRefreshToken s rec)
+  result <- evalIO (getRefreshToken s (rtrJti rec))
+  result === Just rec
+
+-- | Revoking a refresh token by jti removes it.
+prop_revokeRefreshToken :: AccountStore s => IO s -> Property
+prop_revokeRefreshToken mkStore = withTests 5 . property $ do
+  s   <- evalIO mkStore
+  key <- evalIO (getJwtKey s)
+  (_, rec) <- evalIO (createRefreshToken key testAud testDID1)
+  evalIO (storeRefreshToken s rec)
+  evalIO (revokeRefreshToken s (rtrJti rec))
+  result <- evalIO (getRefreshToken s (rtrJti rec))
+  result === Nothing
+
+-- | Revoking all tokens for a DID removes them.
+prop_revokeRefreshTokensByDid :: AccountStore s => IO s -> Property
+prop_revokeRefreshTokensByDid mkStore = withTests 5 . property $ do
+  s   <- evalIO mkStore
+  key <- evalIO (getJwtKey s)
+  (_, rec1) <- evalIO (createRefreshToken key testAud testDID1)
+  (_, rec2) <- evalIO (createRefreshToken key testAud testDID1)
+  evalIO (storeRefreshToken s rec1)
+  evalIO (storeRefreshToken s rec2)
+  evalIO (revokeRefreshTokensByDid s testDID1)
+  r1 <- evalIO (getRefreshToken s (rtrJti rec1))
+  r2 <- evalIO (getRefreshToken s (rtrJti rec2))
+  r1 === Nothing
+  r2 === Nothing
+
+-- | A garbage string is rejected by verifyAccessToken.
+prop_invalidAccessTokenRejected :: AccountStore s => IO s -> Property
+prop_invalidAccessTokenRejected mkStore = withTests 5 . property $ do
+  s   <- evalIO mkStore
+  key <- evalIO (getJwtKey s)
   bad <- forAll (Gen.text (Range.linear 10 50) Gen.alphaNum)
-  verifySessionToken key bad === Nothing
+  result <- evalIO (verifyAccessToken key bad)
+  assert (isLeft result)
 
 -- | Store and retrieve a PLC rotation key.
 prop_plcRotationKeyRoundTrip :: AccountStore s => IO s -> Property
@@ -132,18 +183,30 @@ prop_plcRotationKeyRoundTrip mkStore = withTests 5 . property $ do
   result === Just rotKey
 
 -- ---------------------------------------------------------------------------
+-- Helpers
+-- ---------------------------------------------------------------------------
+
+isLeft :: Either a b -> Bool
+isLeft (Left _)  = True
+isLeft (Right _) = False
+
+-- ---------------------------------------------------------------------------
 -- In-memory backend
 -- ---------------------------------------------------------------------------
 
 tests_inMemory :: [(PropertyName, Property)]
 tests_inMemory =
-  [ ("in-memory: create/get",          prop_createGetAccount        (newInMemoryAccountStore))
-  , ("in-memory: get unknown",         prop_getUnknownAccount       (newInMemoryAccountStore))
-  , ("in-memory: delete",              prop_deleteAccount           (newInMemoryAccountStore))
-  , ("in-memory: password round-trip", prop_passwordRoundTrip       (newInMemoryAccountStore))
-  , ("in-memory: token round-trip",    prop_tokenRoundTrip          (newInMemoryAccountStore))
-  , ("in-memory: invalid token",       prop_sessionInvalidToken     (newInMemoryAccountStore))
-  , ("in-memory: PLC rotation key",    prop_plcRotationKeyRoundTrip (newInMemoryAccountStore))
+  [ ("in-memory: create/get",               prop_createGetAccount           (newInMemoryAccountStore))
+  , ("in-memory: get unknown",              prop_getUnknownAccount          (newInMemoryAccountStore))
+  , ("in-memory: delete",                   prop_deleteAccount              (newInMemoryAccountStore))
+  , ("in-memory: password round-trip",      prop_passwordRoundTrip          (newInMemoryAccountStore))
+  , ("in-memory: access token round-trip",  prop_accessTokenRoundTrip       (newInMemoryAccountStore))
+  , ("in-memory: refresh token round-trip", prop_refreshTokenRoundTrip      (newInMemoryAccountStore))
+  , ("in-memory: store/get refresh token",  prop_storeGetRefreshToken       (newInMemoryAccountStore))
+  , ("in-memory: revoke refresh token",     prop_revokeRefreshToken         (newInMemoryAccountStore))
+  , ("in-memory: revoke tokens by DID",     prop_revokeRefreshTokensByDid   (newInMemoryAccountStore))
+  , ("in-memory: invalid access token",     prop_invalidAccessTokenRejected (newInMemoryAccountStore))
+  , ("in-memory: PLC rotation key",         prop_plcRotationKeyRoundTrip    (newInMemoryAccountStore))
   ]
 
 -- ---------------------------------------------------------------------------
@@ -160,13 +223,17 @@ setupFileAccountStore = do
 
 tests_fileSystem :: [(PropertyName, Property)]
 tests_fileSystem =
-  [ ("file: create/get",              prop_createGetAccount        setupFileAccountStore)
-  , ("file: get unknown",             prop_getUnknownAccount       setupFileAccountStore)
-  , ("file: delete",                  prop_deleteAccount           setupFileAccountStore)
-  , ("file: password round-trip",     prop_passwordRoundTrip       setupFileAccountStore)
-  , ("file: token round-trip",         prop_tokenRoundTrip          setupFileAccountStore)
-  , ("file: invalid token",           prop_sessionInvalidToken     setupFileAccountStore)
-  , ("file: PLC rotation key",        prop_plcRotationKeyRoundTrip setupFileAccountStore)
+  [ ("file: create/get",               prop_createGetAccount           setupFileAccountStore)
+  , ("file: get unknown",              prop_getUnknownAccount          setupFileAccountStore)
+  , ("file: delete",                   prop_deleteAccount              setupFileAccountStore)
+  , ("file: password round-trip",      prop_passwordRoundTrip          setupFileAccountStore)
+  , ("file: access token round-trip",  prop_accessTokenRoundTrip       setupFileAccountStore)
+  , ("file: refresh token round-trip", prop_refreshTokenRoundTrip      setupFileAccountStore)
+  , ("file: store/get refresh token",  prop_storeGetRefreshToken       setupFileAccountStore)
+  , ("file: revoke refresh token",     prop_revokeRefreshToken         setupFileAccountStore)
+  , ("file: revoke tokens by DID",     prop_revokeRefreshTokensByDid   setupFileAccountStore)
+  , ("file: invalid access token",     prop_invalidAccessTokenRejected setupFileAccountStore)
+  , ("file: PLC rotation key",         prop_plcRotationKeyRoundTrip    setupFileAccountStore)
   ]
 
 -- ---------------------------------------------------------------------------

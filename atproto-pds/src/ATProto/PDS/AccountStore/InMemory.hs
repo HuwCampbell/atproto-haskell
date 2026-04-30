@@ -18,8 +18,7 @@ module ATProto.PDS.AccountStore.InMemory
 import           Control.Monad.IO.Class (liftIO)
 import           Data.IORef
 import qualified Data.Map.Strict        as Map
-
-import           Web.ClientSession      (Key, randomKey)
+import qualified Data.Text              as T
 
 import           ATProto.Crypto.Types   (PrivKey)
 import           ATProto.Syntax.DID     (DID)
@@ -31,28 +30,31 @@ import           ATProto.PDS.AccountStore
 
 -- | All mutable state for the in-memory account store.
 data InMemoryAccountStore = InMemoryAccountStore
-  { imasAccounts       :: IORef (Map.Map DID Account)
-  , imasSigningKeys    :: IORef (Map.Map DID PrivKey)
-  , imasPasswordHashes :: IORef (Map.Map DID PasswordHash)
-  , imasPlcRotKeys     :: IORef (Map.Map DID PrivKey)
-  , imasSessionKey     :: Key
-    -- ^ Symmetric key for producing and verifying clientsession tokens.
+  { imasAccounts        :: IORef (Map.Map DID Account)
+  , imasSigningKeys     :: IORef (Map.Map DID PrivKey)
+  , imasPasswordHashes  :: IORef (Map.Map DID PasswordHash)
+  , imasPlcRotKeys      :: IORef (Map.Map DID PrivKey)
+  , imasJwtKey          :: JwtKey
+    -- ^ HMAC-SHA256 key for signing JWTs.
     -- Generated fresh at construction; tokens are invalidated on restart.
+  , imasRefreshTokens   :: IORef (Map.Map T.Text RefreshTokenRecord)
+    -- ^ Active refresh tokens keyed by @jti@.
   }
 
 -- | Create a fresh, empty 'InMemoryAccountStore'.
 --
--- Generates a new random session key.  Session tokens produced by this
+-- Generates a new random JWT key.  Session tokens produced by this
 -- store are invalidated when the store is garbage-collected.
 newInMemoryAccountStore :: IO InMemoryAccountStore
 newInMemoryAccountStore = do
-  (_rawKey, key) <- randomKey
+  key <- generateJwtKey
   InMemoryAccountStore
     <$> newIORef Map.empty
     <*> newIORef Map.empty
     <*> newIORef Map.empty
     <*> newIORef Map.empty
     <*> pure key
+    <*> newIORef Map.empty
 
 -- ---------------------------------------------------------------------------
 -- AccountStore instance
@@ -74,6 +76,7 @@ instance AccountStore InMemoryAccountStore where
     modifyIORef' (imasSigningKeys    s) (Map.delete did)
     modifyIORef' (imasPasswordHashes s) (Map.delete did)
     modifyIORef' (imasPlcRotKeys     s) (Map.delete did)
+    modifyIORef' (imasRefreshTokens  s) (Map.filter (\r -> rtrDid r /= did))
 
   storePassword s did h = liftIO $
     modifyIORef' (imasPasswordHashes s) (Map.insert did h)
@@ -84,11 +87,23 @@ instance AccountStore InMemoryAccountStore where
   getSigningKey s did = liftIO $
     Map.lookup did <$> readIORef (imasSigningKeys s)
 
-  -- | Return the session key generated at construction time.
-  getSessionKey s = return (imasSessionKey s)
+  getJwtKey s = return (imasJwtKey s)
+
+  storeRefreshToken s rec = liftIO $
+    modifyIORef' (imasRefreshTokens s) (Map.insert (rtrJti rec) rec)
+
+  getRefreshToken s jti = liftIO $
+    Map.lookup jti <$> readIORef (imasRefreshTokens s)
+
+  revokeRefreshToken s jti = liftIO $
+    modifyIORef' (imasRefreshTokens s) (Map.delete jti)
+
+  revokeRefreshTokensByDid s did = liftIO $
+    modifyIORef' (imasRefreshTokens s) (Map.filter (\r -> rtrDid r /= did))
 
   storePlcRotationKey s did key = liftIO $
     modifyIORef' (imasPlcRotKeys s) (Map.insert did key)
 
   getPlcRotationKey s did = liftIO $
     Map.lookup did <$> readIORef (imasPlcRotKeys s)
+
