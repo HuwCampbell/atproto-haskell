@@ -1,7 +1,7 @@
 API Alignment Audit
 ===================
 
-Last updated: 2026-04-16.
+Last updated: 2026-04-30.
 
 This document describes the current state of each package in
 atproto-haskell and how closely its public API aligns with the
@@ -582,21 +582,57 @@ atproto-haskell-pds  (AT Protocol Personal Data Server core)
 
 The package provides the core library for building a Personal Data
 Server, including type-class-based storage abstractions, repository
-management, and commit signing.
+management, commit signing, account management, and blob storage.
 
-Storage is abstracted behind two type classes:
+Storage is abstracted behind three type classes:
 
   - BlockStore: content-addressed block storage (CID -> bytes), with
-    getBlock and putBlock.
-  - RepoStore: repository metadata (DID -> head commit CID), with
-    getRepoHead and setRepoHead.
+    getBlock, putBlock, and deleteBlock.
+  - RepoStore: repository head pointer (DID-scoped, single head CID),
+    with getRepoHead and setRepoHead.
+  - BlobStore: streaming blob storage with a temp-stage-then-commit
+    lifecycle (putTemp, makePermanent, streamBytes, delete).
 
-Two concrete backends are provided:
+Account management is abstracted behind the AccountStore type class
+(ATProto.PDS.AccountStore):
 
-  - InMemoryStore: IORef-wrapped Maps, suitable for tests and
-    short-lived processes.
-  - FileStore: filesystem backend storing blocks and heads as
-    individual files in subdirectories.
+  - createAccount / getAccount / updateAccount / deleteAccount: CRUD
+    for Account records (DID, handle, email, deactivated flag).
+  - storePassword / getPasswordHash: bcrypt password storage.
+  - getSigningKey: retrieve the actor's commit-signing key.
+  - storePlcRotationKey / getPlcRotationKey: optional PLC rotation key
+    for did:plc-based accounts.
+  - getJwtKey: retrieve the 32-byte HMAC-SHA256 key used to sign JWTs.
+  - storeRefreshToken / getRefreshToken / revokeRefreshToken /
+    revokeRefreshTokensByDid: refresh-token lifecycle management.
+
+Session token helpers (createAccessToken, createRefreshToken,
+verifyAccessToken, verifyRefreshToken) issue and verify compact HS256
+JWTs following the upstream PDS format: access tokens use typ "at+jwt"
+(120-minute TTL) and refresh tokens use typ "refresh+jwt" (90-day TTL
+with server-side jti tracking for revocation).
+
+The actor-store abstraction (ATProto.PDS.ActorStore) bundles a DID
+with its per-actor storage value.  ActorStoreBackend is a factory that
+opens and closes scoped stores; withActorStore provides bracket-style
+resource safety.  This mirrors the actor-store subsystem in the
+reference PDS.
+
+Concrete backends provided:
+
+  - InMemoryBackend / InMemoryActorStore: IORef-wrapped Maps, suitable
+    for tests and short-lived processes.
+  - FileBackend / FileActorStore: filesystem backend storing blocks as
+    individual files named by base32-encoded CID; blob staging via a
+    temp directory with atomic rename; implements BlockStore, RepoStore,
+    and BlobStore.
+  - InMemoryAccountStore: IORef-wrapped Maps for all account data;
+    generates a fresh JWT key at construction.
+  - FileAccountStore: persists accounts as key=value text files under
+    basedir/accounts/<did>/, password hashes, signing keys, and PLC
+    rotation keys; persists the JWT key to basedir/jwt.key so session
+    tokens survive process restarts; refresh tokens stored as individual
+    files under basedir/refresh_tokens/<jti>.
 
 Commit signing (ATProto.PDS.Commit) produces v3 signed commits in
 canonical DAG-CBOR field order (did, rev, sig, data, prev, version).
@@ -613,7 +649,7 @@ RepoStore, MST, and commit signing:
   - listRecords: lists all records in a collection.
   - deleteRecord: removes a record, produces a new commit.
   - applyWrites: atomic batch of Create/Update/Delete operations in
-    a single commit.
+    a single commit using zipperDiff for efficient block diffing.
   - exportRepoCar: exports the full repository state as CAR v1 bytes.
   - importRepoCar: imports CAR v1 bytes into block storage and sets
     the repository head.
@@ -622,12 +658,11 @@ The PdsError type covers all failure modes (repo not found, already
 exists, block not found, MST error, commit decode error, record
 exists, record not found).
 
-Gap: no BlobStore, PreferenceStore, or AccountStore type classes.
-Blob management, user preferences, and account data are not yet
-abstracted.
-
 Gap: no sequencer (outbound firehose producer).  Commits are stored
 but not broadcast to WebSocket subscribers.
+
+Gap: no PreferenceStore type class.  User preference storage is not
+yet abstracted.
 
 
 atproto-haskell-tap  (Trusted Application Pass -- @atproto/tap)
@@ -670,6 +705,41 @@ Gap: the client streams all events for tracked repositories without
 server-side filtering by collection or action type.
 
 
+atproto-haskell-plc  (PLC directory operations)
+------------------------------------------------
+
+The package provides types and an HTTP client for creating and
+updating did:plc identifiers via the PLC directory.
+
+UnsignedPlcOp captures the full contents of a PLC genesis or
+update operation: rotation keys (did:key list), verification methods
+(map of label to did:key, e.g. {"atproto": "did:key:z..."}),
+alsoKnownAs aliases (at:// handle URIs), services (map of service ID
+to PlcService with type and endpoint), and optional prev CID for
+updates.
+
+signPlcOp signs an UnsignedPlcOp with a rotation key using the
+EC signing function from atproto-haskell-crypto, producing a base64url
+signature attached as a PlcOp.  encodePlcOpForSigning encodes the
+unsigned operation in canonical DAG-CBOR field order (prev, type,
+services, alsoKnownAs, rotationKeys, verificationMethods).
+
+plcOpDid derives the did:plc identifier from a genesis operation: it
+SHA-256 hashes the DAG-CBOR encoding, takes the first 15 bytes, and
+base32-encodes them.  This matches the PLC specification exactly.
+
+PlcClient wraps an HTTP Manager and base URL.  submitPlcOp posts a
+signed PlcOp as JSON to POST /<did>.  resolvePlcDid fetches the DID
+document via GET /<did>.  defaultPlcEndpoint points to the live
+plc.directory.
+
+Gap: no support for plc_tombstone operations (account deletion from
+the PLC directory).
+
+Gap: no support for verifying existing PLC operation chains (audit
+log traversal and signature verification for the full history).
+
+
 Personal Data Server -- Readiness Analysis
 -----------------------------------------
 
@@ -687,18 +757,19 @@ and assesses readiness.
 
 | Upstream subsystem | Haskell equivalent | Status |
 |---|---|---|
-| account-manager/ -- account DB, email verification, sessions | None | Missing |
-| actor-store/ -- per-actor repo storage | atproto-pds BlockStore + RepoStore type classes with InMemory and FileSystem backends | Present (basic) |
+| account-manager/ -- account DB, email verification, sessions | atproto-pds AccountStore typeclass with InMemory and FileSystem backends; HS256 JWT access/refresh token lifecycle | Present (basic) |
+| actor-store/ -- per-actor repo storage | atproto-pds BlockStore + RepoStore + BlobStore type classes with InMemory and FileSystem backends; ActorStore + ActorStoreBackend factory | Present |
 | api/ -- XRPC handlers for com.atproto.* | atproto-repo covers repo.* (createRecord, getRecord, listRecords, putRecord, deleteRecord, describeRepo, applyWrites, uploadBlob, getBlob, listMissingBlobs), server.* (createAccount, createSession, refreshSession, deleteSession, getSession, describeServer, getServiceAuth, checkAccountStatus), identity.* (resolveHandle, resolveDid, resolveIdentity, updateHandle), sync.* (getBlob, getLatestCommit, getRepo, getRepoStatus, listBlobs, listRepos, notifyOfUpdate, requestCrawl), label.defs | Present (typed bindings for all core methods) |
-| auth-verifier.ts -- JWT/OAuth token verification | atproto-service-auth (service-to-service JWTs); atproto-oauth-provider (DPoP proof verification, at+jwt token verification, request authentication); atproto-xrpc-server AuthVerifier hook wires them to XRPC handlers | Present |
+| auth-verifier.ts -- JWT/OAuth token verification | atproto-service-auth (service-to-service JWTs); atproto-oauth-provider (DPoP proof verification, at+jwt token verification, request authentication); atproto-xrpc-server AuthVerifier hook wires them to XRPC handlers; atproto-pds AccountStore verifyAccessToken for HS256 session tokens | Present |
 | auth-routes.ts / auth-scope.ts -- OAuth provider routes | atproto-oauth-provider covers token verification and DPoP; authorisation code grant flow absent | Partial |
 | sequencer/ -- outbound event sequencer (firehose emitter) | atproto-firehose covers the consumer side | Missing (producer side) |
 | did-cache/ -- persisted DID document cache | CachingResolver in atproto-did | Present |
-| disk-blobstore.ts / aws -- blob storage | BlobStore | Present |
+| disk-blobstore.ts / aws -- blob storage | BlobStore typeclass + FileActorStore BlobStore instance (temp-stage then atomic rename) | Present (basic) |
 | mailer/ -- email for verification and password reset | None | Missing (out of scope for library) |
 | handle/ -- handle resolution and validation | atproto-identity + atproto-syntax | Present |
 | config/ -- server configuration | None | Missing (application concern) |
-| repo/ (PDS-internal) -- repo mutation (create/update/delete) | atproto-pds (initRepo, createRecord, getRecord, listRecords, deleteRecord, applyWrites) using atproto-mst (insert, fromList, toBlockMap) for MST mutations and atproto-pds Commit for v3 signing | Present |
+| repo/ (PDS-internal) -- repo mutation (create/update/delete) | atproto-pds (initRepo, createRecord, getRecord, listRecords, deleteRecord, applyWrites) using atproto-mst (insert, fromList, toBlockMap, zipperDiff) for efficient MST mutations and atproto-pds Commit for v3 signing | Present |
+| plc/ -- did:plc genesis and updates | atproto-plc (UnsignedPlcOp, signPlcOp, plcOpDid, submitPlcOp, resolvePlcDid) | Present (basic) |
 | well-known.ts -- .well-known/atproto-did and did.json serving | None | Missing (trivial, application concern) |
 | crawlers.ts -- notifying relays of new commits | None | Missing |
 | pipethrough.ts -- proxying unimplemented queries to AppView | atproto-xrpc-http | Possible |
@@ -707,16 +778,18 @@ and assesses readiness.
 The most significant remaining gaps for a PDS implementation are as
 follows.
 
-Account and session management.  There is no database layer for storing
-accounts, password hashes, email verification tokens, or login sessions.
-The reference account-manager/ subsystem uses SQLite (or PostgreSQL in
-hosted deployments) with a schema covering accounts, app-passwords,
-email tokens, and device sessions.
+Account and session management -- partial.  The AccountStore typeclass
+and both InMemory and FileSystem backends are now implemented.  Session
+tokens (HS256 access/refresh JWTs) are issued and verified.  What
+remains is wiring these into live XRPC handler implementations:
+com.atproto.server.createSession, refreshSession, deleteSession,
+getSession must call the AccountStore methods and return the correct
+JSON shapes.
 
-Blob storage.  There is no blob store abstraction.  The reference PDS
-supports local disk storage (disk-blobstore.ts) and an S3-compatible
-backend.  A Haskell PDS would need at minimum a typeclass abstraction
-and a disk implementation.
+Blob storage -- present.  The BlobStore typeclass is defined and the
+FileActorStore provides a working file-system implementation using
+temp-stage-then-atomic-rename.  The XRPC com.atproto.repo.uploadBlob
+and getBlob handlers must be wired to BlobStore operations.
 
 Sequencer (outbound firehose producer).  The atproto-firehose package
 is a firehose consumer.  A PDS must emit events: on every commit it
@@ -729,18 +802,25 @@ OAuth authorisation code grant.  The atproto-oauth-provider package
 handles token verification and DPoP but does not implement the
 authorisation code grant flow (issuing codes, consent UI integration,
 code-for-token exchange).  A full PDS authorisation server requires
-these additional flows.
+these additional flows.  For a minimal PDS using only handle/password
+sessions this can be deferred.
+
+Application wiring.  There is no top-level atproto-pds-server (or
+similar) package that wires all the library components into a runnable
+Warp/WAI application.  All the library pieces exist; what is missing
+is the assembly.
 
 What is already present and useful for a PDS implementation:
 
-The atproto-pds package provides the core repository operations
+The atproto-pds package provides full repository operations
 (initRepo, createRecord, getRecord, listRecords, deleteRecord,
 applyWrites) with pluggable storage backends and v3 commit signing.
-CAR export and import round-trip correctly.
+CAR export and import round-trip correctly.  The AccountStore, BlobStore,
+and ActorStore abstractions are complete enough to build handlers on.
 
-The atproto-mst package now covers both reading and writing: insert,
-fromList, toBlockMap, diff, and verifyProofs form the complete MST
-layer needed by the PDS.
+The atproto-mst package covers both reading and writing: insert,
+fromList, toBlockMap, diff (zipperDiff), and verifyProofs form the
+complete MST layer needed by the PDS.
 
 All cryptographic primitives in atproto-haskell-crypto cover key
 generation, signing, and verification for both P-256 and secp256k1,
@@ -754,6 +834,9 @@ types and codec definitions.
 DID resolution in atproto-did (with caching) and handle resolution in
 atproto-identity provide the infrastructure needed to verify user keys
 and resolve handles.
+
+The atproto-plc package provides the PLC genesis operation creation
+needed to register a new did:plc when provisioning an account.
 
 Service auth in atproto-service-auth is ready for the PDS-to-AppView
 and PDS-to-Ozone inter-service call pattern.
@@ -786,8 +869,152 @@ The following items from the reference packages are not yet implemented:
 - Test vectors from the AT Protocol specification in crypto tests
 - ToJSON instances for Lexicon schema types (atproto-haskell-lexicon)
 - Runtime value-level validation of JSON values against Lexicon schemas
-- Account and session management database layer
-- Blob store abstraction and implementations
 - Sequencer (outbound firehose producer)
 - OAuth authorisation code grant flow (server-side)
 - CAR v2 support
+- plc_tombstone operation in atproto-haskell-plc
+- PLC audit log verification in atproto-haskell-plc
+- PreferenceStore type class
+- XRPC handler implementations (the library types exist; the server-side
+  glue that calls AccountStore / ActorStore / BlobStore from handlers is
+  absent)
+- .well-known route serving and relay crawler notification (application
+  concerns, trivial once the above are complete)
+
+
+Minimal PDS Plan
+----------------
+
+This section describes the minimum work needed to run a functional
+Personal Data Server using the libraries already in this repository.
+The scope is deliberately narrow: we do not support anonymous account
+creation (all accounts are provisioned by an administrator), and we
+do not require zero-trust OAuth (DPoP / full authorisation code grant
+can be added later as an upgrade).  Password-based HS256 JWT sessions
+cover the initial deployment.
+
+The new work lives in a single new executable package, tentatively
+called atproto-pds-server, which imports the library crates and wires
+them into a Warp application.
+
+### Phase 1 -- Account provisioning (admin-only)
+
+Goal: an administrator can create a new account for a known user.
+This requires:
+
+1. A signed did:plc genesis operation.
+   - Generate a fresh secp256k1 or P-256 rotation key and an atproto
+     signing key.
+   - Build an UnsignedPlcOp (atproto-plc): rotation keys, atproto
+     verification method, at://<handle> alsoKnownAs, atproto_pds
+     service pointing at this server's URL.
+   - Call signPlcOp and plcOpDid to produce the DID.
+   - Call submitPlcOp to register it with plc.directory (or a local
+     PLC instance for testing).
+
+2. AccountStore initialisation.
+   - Construct an Account value and call createAccount on the chosen
+     backend (FileAccountStore for production).
+   - Call storePassword with a bcrypt hash of the initial password.
+
+3. Repo initialisation.
+   - Open an ActorStore via the FileBackend for the new DID.
+   - Call initRepo with the actor's signing key to create the empty
+     signed repository.
+
+The admin provisioning step can initially be a simple command-line
+tool (or a protected HTTP admin endpoint) -- it does not need to be
+an XRPC endpoint since we are not accepting self-service signup.
+
+### Phase 2 -- Session management XRPC endpoints
+
+Implement the following com.atproto.server.* handlers:
+
+- createSession: accepts identifier (handle or DID) and password.
+  1. Resolve the DID for the handle (atproto-identity or direct DB
+     lookup).
+  2. Call getPasswordHash and checkPassword.
+  3. Call createAccessToken and createRefreshToken.
+  4. Call storeRefreshToken.
+  5. Return the typed CreateSessionResponse (atproto-repo binding).
+
+- refreshSession: accepts a refresh token in the Authorization header
+  or request body.
+  1. Call verifyRefreshToken (signature + expiry).
+  2. Call getRefreshToken (server-side revocation check).
+  3. Call revokeRefreshToken on the old jti.
+  4. Issue new access and refresh tokens, store the new refresh token.
+
+- deleteSession (logout): call revokeRefreshToken for the presented
+  jti.
+
+- getSession: verify the access token, return DID and handle.
+
+- describeServer: return the server's DID, handle, and capability
+  flags.  No auth required.
+
+Authentication hook: wire verifyAccessToken into the XRPC server's
+AuthVerifier so that all authenticated endpoints automatically check
+the HS256 access token before dispatching.
+
+### Phase 3 -- Repository XRPC endpoints
+
+Implement the following com.atproto.repo.* handlers (each requires
+a valid access token via the auth hook from Phase 2):
+
+- createRecord: validate collection NSID, deserialise the request body,
+  call createRecord on the ActorStore, return AT-URI and commit CID.
+- putRecord: call applyWrites (Update op).
+- deleteRecord: call deleteRecord on the ActorStore.
+- getRecord: call getRecord on the ActorStore.
+- listRecords: call listRecords, apply cursor/limit pagination.
+- describeRepo: call getAccount for handle; return handle, DID, and
+  collection list derived from the MST keys.
+- applyWrites: decode the batch, call applyWrites on the ActorStore.
+- uploadBlob: stream the request body through BlobStore.putTemp, then
+  BlobStore.makePermanent after computing the CID.
+- getBlob: stream via BlobStore.streamBytes.
+
+### Phase 4 -- Identity and sync endpoints
+
+- com.atproto.identity.resolveHandle: call the HandleResolver.
+- com.atproto.identity.resolveDid: call the DidResolver.
+- com.atproto.sync.getRepo: call exportRepoCar and stream the result.
+- com.atproto.sync.getLatestCommit: return head CID and rev from the
+  ActorStore.
+
+### Phase 5 -- Well-known routes
+
+Serve two routes outside the /xrpc path:
+
+- GET /.well-known/atproto-did -- return the server's own DID as plain
+  text (used for did:web and handle verification).
+- GET /xrpc/com.atproto.identity.resolveHandle with ?handle=<this-host>
+  already handles the handle-to-DID resolution path.
+
+These are trivial WAI route additions alongside the xrpcMiddleware.
+
+### Phase 6 -- Relay notification (optional)
+
+After each commit, call com.atproto.sync.notifyOfUpdate on configured
+relay endpoints using the atproto-xrpc-http client.  This is a
+fire-and-forget POST; failures should be logged but not surface to
+the caller.
+
+### What is explicitly out of scope
+
+- Zero-trust / anonymous account creation: the server will refuse
+  com.atproto.server.createAccount from clients.  Account creation
+  goes through the admin provisioning tool only.
+- Full OAuth authorisation code grant (DPoP, consent UI, PAR): the
+  atproto-oauth-provider token-verification layer is available and can
+  be added later, but the initial deployment uses HS256 JWTs.
+- Email verification and password-reset flows: the AccountStore has
+  fields for email but no mailer subsystem; out of scope for now.
+- Sequencer / WebSocket firehose: commits will be stored but not
+  broadcast; relays that discover the PDS via notifyOfUpdate will
+  crawl via com.atproto.sync.getRepo instead.
+- App password management: the single password per account is
+  sufficient for the initial deployment.
+- Multi-tenant / hosted PDS: the initial target is a single-tenant
+  self-hosted instance with a small number of admin-provisioned accounts.
