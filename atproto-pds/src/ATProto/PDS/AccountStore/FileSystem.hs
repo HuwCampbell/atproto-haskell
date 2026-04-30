@@ -186,6 +186,8 @@ instance AccountStore FileAccountStore where
       let path = dir </> file
           jti  = T.pack file
       content <- readFile path
+      -- Files that cannot be parsed are skipped; they may be stale or
+      -- from a different format.  Callers should monitor for orphaned files.
       case decodeRefreshToken jti content of
         Just rec | rtrDid rec == did -> removeFile path
         _                            -> return ()

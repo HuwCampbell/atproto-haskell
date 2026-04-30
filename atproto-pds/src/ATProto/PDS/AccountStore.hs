@@ -211,7 +211,7 @@ createRefreshToken
   -> IO (T.Text, RefreshTokenRecord)
 createRefreshToken key aud did = do
   now <- posixNow
-  jti <- randomHex 16
+  jti <- randomHexBytes 16
   let expT      = now + refreshTokenTTL
       expiresAt = posixSecondsToUTCTime (fromIntegral expT)
       header    = "{\"alg\":\"HS256\",\"typ\":\"refresh+jwt\"}"
@@ -459,9 +459,11 @@ b64url = BAE.convertToBase BAE.Base64URLUnpadded
 posixNow :: IO Int
 posixNow = round <$> getPOSIXTime
 
--- | Generate @n@ random bytes encoded as lowercase hex.
-randomHex :: Int -> IO T.Text
-randomHex n = do
+-- | Generate @n@ random bytes and return them as uppercase hex.
+--
+-- The resulting string has length @2 * n@.
+randomHexBytes :: Int -> IO T.Text
+randomHexBytes n = do
   bs <- getRandomBytes n :: IO BS.ByteString
   return $ TE.decodeUtf8 $ BAE.convertToBase BAE.Base16 bs
 
