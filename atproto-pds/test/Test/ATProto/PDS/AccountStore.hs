@@ -103,24 +103,13 @@ prop_checkPasswordWrong = withTests 10 . property $ do
     then success   -- skip coincidental equality
     else assert (not (checkPassword bad h))
 
--- | makeSessionToken + getSession returns the correct DID.
---
--- Tokens are clientsession-encrypted blobs; 'getSession' decrypts them to
--- recover the DID -- no session table is scanned.
-prop_sessionRoundTrip :: AccountStore s => IO s -> Property
-prop_sessionRoundTrip mkStore = withTests 5 . property $ do
+-- | makeSessionToken round-trips through verifySessionToken.
+prop_tokenRoundTrip :: AccountStore s => IO s -> Property
+prop_tokenRoundTrip mkStore = withTests 5 . property $ do
   s   <- evalIO mkStore
-  acc <- evalIO (makeAccount testDID1)
-  (sigKey, _) <- evalIO (generateKeyPair P256)
-  evalIO (createAccount s acc sigKey)
   sessionKey <- evalIO (getSessionKey s)
   token  <- evalIO (makeSessionToken sessionKey testDID1)
-  result <- evalIO (getSession s token)
-  case result of
-    Nothing   -> do
-      annotate "getSession returned Nothing for a valid token"
-      failure
-    Just sess -> sessionDid sess === testDID1
+  verifySessionToken sessionKey token === Just testDID1
 
 -- | verifySessionToken rejects arbitrary garbage tokens.
 prop_sessionInvalidToken :: AccountStore s => IO s -> Property
@@ -152,7 +141,7 @@ tests_inMemory =
   , ("in-memory: get unknown",         prop_getUnknownAccount       (newInMemoryAccountStore))
   , ("in-memory: delete",              prop_deleteAccount           (newInMemoryAccountStore))
   , ("in-memory: password round-trip", prop_passwordRoundTrip       (newInMemoryAccountStore))
-  , ("in-memory: session round-trip",  prop_sessionRoundTrip        (newInMemoryAccountStore))
+  , ("in-memory: token round-trip",    prop_tokenRoundTrip          (newInMemoryAccountStore))
   , ("in-memory: invalid token",       prop_sessionInvalidToken     (newInMemoryAccountStore))
   , ("in-memory: PLC rotation key",    prop_plcRotationKeyRoundTrip (newInMemoryAccountStore))
   ]
@@ -175,7 +164,7 @@ tests_fileSystem =
   , ("file: get unknown",             prop_getUnknownAccount       setupFileAccountStore)
   , ("file: delete",                  prop_deleteAccount           setupFileAccountStore)
   , ("file: password round-trip",     prop_passwordRoundTrip       setupFileAccountStore)
-  , ("file: session round-trip",      prop_sessionRoundTrip        setupFileAccountStore)
+  , ("file: token round-trip",         prop_tokenRoundTrip          setupFileAccountStore)
   , ("file: invalid token",           prop_sessionInvalidToken     setupFileAccountStore)
   , ("file: PLC rotation key",        prop_plcRotationKeyRoundTrip setupFileAccountStore)
   ]

@@ -4,7 +4,6 @@
 -- This module provides:
 --
 -- * 'Account' – persisted metadata for a single actor.
--- * 'Session' – access + refresh token pair issued at login.
 -- * 'PasswordHash' – opaque hash produced by 'hashPassword'.
 -- * 'AccountStore' – typeclass that storage backends must implement.
 --
@@ -36,7 +35,6 @@
 module ATProto.PDS.AccountStore
   ( -- * Data types
     Account (..)
-  , Session (..)
   , PasswordHash (..)
     -- * Password helpers
   , hashPassword
@@ -78,21 +76,6 @@ data Account = Account
     -- ^ UTC timestamp of account creation.
   , accountDeactivated :: !Bool
     -- ^ 'True' when the account is deactivated (e.g. during DID migration).
-  } deriving (Eq, Show)
-
--- | A session token pair issued at login.
---
--- Both tokens are produced by 'makeSessionToken': they are
--- 'Web.ClientSession'-encrypted blobs that encode the actor's DID.
--- Verifying a token requires only the symmetric 'Key' from the store
--- (via 'getSessionKey') — no global list is consulted.
-data Session = Session
-  { sessionDid        :: !DID
-    -- ^ The DID this session belongs to.
-  , sessionAccessJwt  :: !T.Text
-    -- ^ Short-lived access token (clientsession-encrypted DID).
-  , sessionRefreshJwt :: !T.Text
-    -- ^ Longer-lived refresh token (clientsession-encrypted DID).
   } deriving (Eq, Show)
 
 -- | An opaque password hash produced by 'hashPassword'.
@@ -164,19 +147,11 @@ verifySessionToken key token =
 -- 'deleteAccount', 'storePassword', 'getPasswordHash', 'getSigningKey',
 -- 'storePlcRotationKey', 'getPlcRotationKey', and 'getSessionKey'.
 --
--- The session methods ('storeSession', 'getSession', 'deleteSession') have
--- default implementations built on 'getSessionKey' that require __no__
--- server-side session storage: 'getSession' decrypts the token to recover
--- the DID, and 'storeSession' \/ 'deleteSession' are no-ops.  Override
--- them only if you need a revocation denylist or other extra bookkeeping.
---
 -- = Invariants
 --
 -- * 'createAccount' stores the account unconditionally; calling it twice
 --   with the same DID replaces the first entry.
 -- * 'getAccount' returns 'Nothing' for unknown DIDs.
--- * 'getSession' verifies the token and looks up the account; it returns
---   'Nothing' for unknown DIDs even if the token is cryptographically valid.
 class AccountStore s where
   -- | Persist a new account.
   --
@@ -243,59 +218,6 @@ class AccountStore s where
     :: MonadIO m
     => s
     -> m Key
-
-  -- | Record an active session.
-  --
-  -- The default implementation is a no-op: because tokens produced by
-  -- 'makeSessionToken' are self-describing, no server-side session list
-  -- is needed.  Override only if you need a revocation denylist.
-  storeSession
-    :: MonadIO m
-    => s
-    -> Session
-    -> m ()
-  storeSession _ _ = return ()
-
-  -- | Look up a session by its access token.
-  --
-  -- The default implementation decrypts the token with 'getSessionKey'
-  -- to recover the DID, then calls 'getAccount' to confirm the account
-  -- still exists.  Returns 'Nothing' if the token is invalid or the
-  -- account has been deleted.
-  --
-  -- __Note:__ the default implementation sets 'sessionRefreshJwt' to an
-  -- empty string; callers that need a refresh token should produce one
-  -- separately using 'makeSessionToken' and pass the full 'Session' to
-  -- 'storeSession' (or override this method).
-  getSession
-    :: MonadIO m
-    => s
-    -> T.Text     -- ^ Access token
-    -> m (Maybe Session)
-  getSession s token = do
-    key <- getSessionKey s
-    case verifySessionToken key token of
-      Nothing  -> return Nothing
-      Just did -> do
-        mAcc <- getAccount s did
-        case mAcc of
-          Nothing -> return Nothing
-          Just _  -> return $ Just Session
-            { sessionDid        = did
-            , sessionAccessJwt  = token
-            , sessionRefreshJwt = ""
-            }
-
-  -- | Revoke a session by its access token.
-  --
-  -- The default implementation is a no-op: with clientsession tokens the
-  -- client simply discards the token.  Override to maintain a denylist.
-  deleteSession
-    :: MonadIO m
-    => s
-    -> T.Text     -- ^ Access token
-    -> m ()
-  deleteSession _ _ = return ()
 
   -- | Store a PLC rotation key for a DID.
   --
